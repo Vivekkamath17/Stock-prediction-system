@@ -8,3 +8,9 @@ requests
 torch
 transformers
 uvicorn
+# Regime Detection Agent
+yfinance
+pandas_ta
+hmmlearn
+matplotlib
+numpy
