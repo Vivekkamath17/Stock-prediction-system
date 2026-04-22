@@ -81,11 +81,13 @@ app.get('/api/sentiment/:ticker/:name', (req, res) => {
 // Execute the Python Market Regime Detection Agent
 app.get('/api/regime/:ticker', (req, res) => {
   const { ticker } = req.params;
-  console.log(`[API] Triggering Regime Agent for ${ticker}`);
+  const exchange = req.query.exchange || 'NSE';
+  console.log(`[API] Triggering Regime Agent for ${ticker} (${exchange})`);
 
   const pythonProcess = spawn('python', [
     path.join(__dirname, 'models', 'regime_agent', 'regime_agent.py'),
-    ticker
+    ticker,
+    exchange
   ], {
     env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     cwd: path.join(__dirname, '..')  // run from project root so dotenv finds .env
@@ -124,6 +126,195 @@ app.get('/api/regime/:ticker', (req, res) => {
   });
 });
 
-app.listen(port, () => {
+// Execute the Python Technical Analysis Agent
+app.get('/api/technical/:ticker', (req, res) => {
+  const { ticker } = req.params;
+  const exchange = req.query.exchange || 'NSE';
+  console.log(`[API] Triggering Technical Agent for ${ticker} (${exchange})`);
+
+  const pythonProcess = spawn('python', [
+    path.join(__dirname, 'models', 'technical_agent', 'technical_agent.py'),
+    ticker,
+    exchange
+  ], {
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    cwd: path.join(__dirname, '..')  // run from project root so dotenv finds .env
+  });
+
+  let outputData = '';
+  let errorData = '';
+
+  pythonProcess.stdout.on('data', (data) => {
+    outputData += data.toString();
+    console.log(data.toString());
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    errorData += data.toString();
+  });
+
+  pythonProcess.on('close', (code) => {
+    const jsonRegex = /---JSON_OUTPUT---(.*?)---JSON_OUTPUT---/s;
+    const match = outputData.match(jsonRegex);
+
+    if (match && match[1]) {
+      try {
+        const technicalData = JSON.parse(match[1].trim());
+        if (technicalData.error) {
+          return res.status(422).json({ success: false, error: technicalData.error });
+        }
+        res.json({ success: true, data: technicalData });
+      } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to parse Technical JSON.' });
+      }
+    } else {
+      console.error(`Technical agent stderr: ${errorData}`);
+      res.status(500).json({ success: false, error: 'Technical agent returned no output.' });
+    }
+  });
+});
+
+// Execute the Python Price History script
+app.get('/api/price-history', (req, res) => {
+  const ticker = req.query.ticker || '^NSEI';
+  const exchange = req.query.exchange || 'NSE';
+  const period = req.query.period || '1mo';
+  
+  console.log(`[API] Fetching Price History for ${ticker} (${exchange}, ${period})`);
+
+  const pythonProcess = spawn('python', [
+    path.join(__dirname, 'models', 'price_history.py'),
+    ticker,
+    exchange,
+    period
+  ], {
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    cwd: path.join(__dirname, '..')
+  });
+
+  let outputData = '';
+  let errorData = '';
+
+  pythonProcess.stdout.on('data', (data) => {
+    outputData += data.toString();
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    errorData += data.toString();
+  });
+
+  pythonProcess.on('close', (code) => {
+    const jsonRegex = /---JSON_OUTPUT---(.*?)---JSON_OUTPUT---/s;
+    const match = outputData.match(jsonRegex);
+
+    if (match && match[1]) {
+      try {
+        const data = JSON.parse(match[1].trim());
+        if (data.error) {
+          return res.status(422).json({ success: false, error: data.error });
+        }
+        res.json({ success: true, data });
+      } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to parse Price JSON.' });
+      }
+    } else {
+      console.error(`Price History stderr: ${errorData}`);
+      res.status(500).json({ success: false, error: 'Price history script returned no output.' });
+    }
+  });
+});
+
+// ── NEWS HEADLINES ENDPOINT ────────────────────────────────────────────────────
+// Serves the news CSV that the regime agent writes to server/news.csv
+// Falls back to any *NewsAPI* or *News* CSV if news.csv is absent
+app.get('/api/news-headlines', (req, res) => {
+  const fs = require('fs');
+  const pathModule = require('path');
+
+  // Candidate paths: prefer news.csv, fall back to any *News*.csv in server/
+  const serverDir = __dirname;
+  let csvPath = pathModule.join(serverDir, 'news.csv');
+
+  if (!fs.existsSync(csvPath)) {
+    // Try to find any *News*.csv the regime agent may have written
+    const files = fs.readdirSync(serverDir);
+    const fallback = files.find(f => /news/i.test(f) && f.endsWith('.csv'));
+    if (fallback) {
+      csvPath = pathModule.join(serverDir, fallback);
+    } else {
+      return res.json({ headlines: [], error: 'news.csv not found', count: 0 });
+    }
+  }
+
+  try {
+    const raw = fs.readFileSync(csvPath, 'utf-8');
+
+    // Minimal CSV parser — handles quoted fields
+    const lines = raw.trim().split(/\r?\n/);
+    if (lines.length < 2) {
+      return res.json({ headlines: [], error: 'CSV is empty', count: 0 });
+    }
+
+    // Parse header — normalise to lowercase_underscored
+    const parseRow = (line) => {
+      const cols = [];
+      let cur = '';
+      let inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (c === '"') { inQ = !inQ; continue; }
+        if (c === ',' && !inQ) { cols.push(cur); cur = ''; continue; }
+        cur += c;
+      }
+      cols.push(cur);
+      return cols;
+    };
+
+    const headers = parseRow(lines[0]).map(h =>
+      h.trim().toLowerCase().replace(/\s+/g, '_')
+    );
+
+    let records = lines.slice(1)
+      .filter(l => l.trim())
+      .map(line => {
+        const vals = parseRow(line);
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
+        return obj;
+      });
+
+    // Sort by |sentiment_score| descending if column exists
+    const scoreKey = headers.find(h => h.includes('sentiment') && h.includes('score'))
+                  || headers.find(h => h.includes('score'))
+                  || null;
+
+    if (scoreKey) {
+      records.sort((a, b) =>
+        Math.abs(parseFloat(b[scoreKey]) || 0) - Math.abs(parseFloat(a[scoreKey]) || 0)
+      );
+    }
+
+    const top10 = records.slice(0, 10);
+    console.log(`[API] /api/news-headlines → served ${top10.length} rows from ${pathModule.basename(csvPath)}`);
+    res.json({ headlines: top10, count: top10.length, source: pathModule.basename(csvPath) });
+
+  } catch (err) {
+    console.error('[API] news-headlines error:', err.message);
+    res.status(500).json({ headlines: [], error: err.message, count: 0 });
+  }
+});
+// ── END NEWS HEADLINES ENDPOINT ────────────────────────────────────────────────
+
+const server = app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`ERROR: Port ${port} is already in use by another process.`);
+    console.error('Please kill the hanging process and try again.');
+  } else {
+    console.error('Server failed to start:', err);
+  }
+  process.exit(1);
 });

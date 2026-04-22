@@ -50,16 +50,41 @@ class MarketRegimeAgent:
         "HighVolatility": "#FF6D00", # Orange
     }
 
-    def __init__(self, ticker: str = "^NSEI", period: str = "3y"):
+    EXCHANGE_SUFFIX_MAP = {
+        "NSE": ".NS",
+        "BSE": ".BO",
+        "NYSE": "",
+        "NASDAQ": "",
+        "LSE": ".L",
+        "TSX": ".TO",
+    }
+
+    def _normalize_ticker(self, ticker: str, exchange: str = "NSE") -> str:
+        """
+        Auto-append yfinance exchange suffix if not already present.
+        """
+        ticker = ticker.strip().upper()
+        suffix = self.EXCHANGE_SUFFIX_MAP.get(exchange.upper(), ".NS")
+        if "." in ticker[1:]:
+            return ticker
+        return ticker + suffix
+
+    def __init__(self, ticker: str = "^NSEI", exchange: str = "NSE", period: str = "3y"):
         """
         Parameters
         ----------
         ticker : str
             Yahoo Finance ticker symbol. Default is ^NSEI (NIFTY 50).
+        exchange: str
+            Exchange name used to append the correct suffix (e.g., .NS for NSE).
         period : str
             Historical data period for yfinance. Default "3y".
         """
-        self.ticker = ticker
+        self.raw_ticker = ticker
+        self.exchange = exchange
+        self.ticker = self._normalize_ticker(ticker, exchange)
+        if ticker.startswith("^"):
+            self.ticker = ticker
         self.period = period
 
         self.df: pd.DataFrame = pd.DataFrame()
@@ -76,9 +101,22 @@ class MarketRegimeAgent:
     def fetch_data(self) -> None:
         """Download historical OHLC data from Yahoo Finance."""
         print(f"[RegimeAgent] Downloading {self.period} of data for {self.ticker}...")
-        raw = yf.download(self.ticker, period=self.period, auto_adjust=True, progress=False)
+        
+        def _try_fetch(t):
+            return yf.download(t, period=self.period, auto_adjust=True, progress=False)
 
-        if raw.empty:
+        raw = _try_fetch(self.ticker)
+
+        if (raw is None or raw.empty) and "." not in self.ticker:
+            fallbacks = [self.ticker + ".NS", self.ticker + ".BO"]
+            for fb in fallbacks:
+                raw = _try_fetch(fb)
+                if raw is not None and not raw.empty:
+                    self.ticker = fb
+                    print(f"[INFO] Resolved ticker to: {self.ticker}")
+                    break
+
+        if raw is None or raw.empty:
             raise ValueError(f"No data returned for ticker '{self.ticker}'. Check the symbol.")
 
         # Flatten potential MultiIndex columns produced by yfinance >= 0.2
@@ -326,31 +364,24 @@ if __name__ == "__main__":
     import sys as _sys
     import json as _json
 
-    # Accept ticker from command line: python regime_agent.py RELIANCE.NS
+    # Accept ticker and exchange from command line: python regime_agent.py M&M NSE
     _ticker = _sys.argv[1] if len(_sys.argv) > 1 else "^NSEI"
-    _period = _sys.argv[2] if len(_sys.argv) > 2 else "3y"
-
-    # Try the ticker as-is, then with .NS suffix (NSE India fallback)
-    _tickers_to_try = [_ticker]
-    if not _ticker.endswith(".NS") and not _ticker.startswith("^"):
-        _tickers_to_try.append(_ticker + ".NS")
+    _exchange = _sys.argv[2] if len(_sys.argv) > 2 else "NSE"
+    _period = _sys.argv[3] if len(_sys.argv) > 3 else "3y"
 
     _result = None
-    for _t in _tickers_to_try:
-        try:
-            agent = MarketRegimeAgent(ticker=_t, period=_period)
-            agent.fetch_data()
-            agent.compute_features()
-            agent.train_hmm()
-            agent.label_regimes()
-            _result = {
-                "regime": agent.get_current_regime(),
-                "ticker": _t,
-            }
-            break  # success — stop trying
-        except Exception as _e:
-            print(f"[RegimeAgent] Ticker '{_t}' failed: {_e}", file=_sys.stderr)
-            continue
+    try:
+        agent = MarketRegimeAgent(ticker=_ticker, exchange=_exchange, period=_period)
+        agent.fetch_data()
+        agent.compute_features()
+        agent.train_hmm()
+        agent.label_regimes()
+        _result = {
+            "regime": agent.get_current_regime(),
+            "ticker": agent.ticker,
+        }
+    except Exception as _e:
+        print(f"[RegimeAgent] Failed: {_e}", file=_sys.stderr)
 
     if _result:
         print(f"\n---JSON_OUTPUT---{_json.dumps(_result)}---JSON_OUTPUT---")

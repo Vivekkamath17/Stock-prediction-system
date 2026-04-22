@@ -4,9 +4,11 @@ import type { StockData } from '../App';
 
 interface CommandCenterProps {
   recommendation: StockData['recommendation'];
+  onViewDetails?: () => void;
+  onExportReport?: () => void;
 }
 
-export function CommandCenter({ recommendation }: CommandCenterProps) {
+export function CommandCenter({ recommendation, onViewDetails, onExportReport }: CommandCenterProps) {
   const trendConfig = {
     upward: {
       icon: TrendingUp,
@@ -117,16 +119,20 @@ export function CommandCenter({ recommendation }: CommandCenterProps) {
         {/* Action Buttons */}
         <div className="flex gap-3">
           <motion.button
+            id="cmd-view-details"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            onClick={onViewDetails}
             className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-[#1E88E5] to-[#1E88E5]/80 rounded-lg font-semibold hover:shadow-[0_0_20px_rgba(30,136,229,0.5)] transition-all"
           >
             <BarChart3 className="size-5" />
             VIEW DETAILS
           </motion.button>
           <motion.button
+            id="cmd-export-report"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            onClick={onExportReport}
             className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-white/5 border border-white/20 rounded-lg font-semibold hover:bg-white/10 transition-all"
           >
             <Download className="size-5" />

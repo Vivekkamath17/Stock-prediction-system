@@ -1,31 +1,37 @@
 import { Rocket, Settings, LogIn, LogOut, UserCircle2 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { NavLink, Link } from 'react-router-dom';
 import type { RegimeType } from '../App';
 
 interface HeaderProps {
-  currentRegime?: RegimeType;
+  currentRegime?: string;
   user: any | null;
   onAuthClick: () => void;
   onLogout: () => void;
 }
 
-const regimeConfig = {
-  bull: {
+const regimeConfig: Record<string, any> = {
+  BULL: {
     label: 'BULL MARKET - Launch Sequence',
     color: 'text-[#00E676]',
     icon: '🟢',
   },
-  bear: {
+  BEAR: {
     label: 'BEAR MARKET - Descent Protocol',
     color: 'text-[#FF1744]',
     icon: '🔴',
   },
-  sideways: {
+  SIDEWAYS: {
     label: 'SIDEWAYS MARKET - Orbital Hold',
     color: 'text-[#FFD600]',
     icon: '🟡',
   },
-  volatile: {
+  HIGHVOLATILITY: {
+    label: 'VOLATILE MARKET - Turbulence Alert',
+    color: 'text-[#9C27B0]',
+    icon: '🟣',
+  },
+  HIGH_VOLATILITY: {
     label: 'VOLATILE MARKET - Turbulence Alert',
     color: 'text-[#9C27B0]',
     icon: '🟣',
@@ -33,29 +39,68 @@ const regimeConfig = {
 };
 
 export function Header({ currentRegime, user, onAuthClick, onLogout }: HeaderProps) {
-  const regime = currentRegime ? regimeConfig[currentRegime] : null;
+  const regimeData = currentRegime ? regimeConfig[currentRegime.replace('_', '').toUpperCase()] : null;
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Commander';
+
+  const navLinkStyle = {
+    fontSize: '13px',
+    fontWeight: 600,
+    letterSpacing: '1.5px',
+    textTransform: 'uppercase' as const,
+    cursor: 'pointer',
+    transition: 'color 0.2s ease, border-color 0.2s ease',
+    textDecoration: 'none',
+    paddingBottom: '4px',
+    borderBottom: '2px solid transparent',
+  };
 
   return (
     <header className="border-b border-white/10 bg-[#0A1128]/80 backdrop-blur-lg sticky top-0 z-50">
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
+          <Link to="/" className="flex items-center gap-3">
             <motion.div
               animate={{ 
-                rotate: currentRegime === 'bull' ? -45 : currentRegime === 'bear' ? 45 : 0,
-                y: currentRegime === 'bull' ? -2 : currentRegime === 'bear' ? 2 : 0,
+                rotate: currentRegime === 'BULL' ? -45 : currentRegime === 'BEAR' ? 45 : 0,
+                y: currentRegime === 'BULL' ? -2 : currentRegime === 'BEAR' ? 2 : 0,
               }}
               transition={{ duration: 0.5 }}
             >
               <Rocket className="size-8 text-[#FF6B35]" />
             </motion.div>
             <div>
-              <h1 className="text-2xl font-bold tracking-wider">MARKET MISSION CONTROL</h1>
+              <h1 className="text-2xl font-bold tracking-wider text-white">MARKET MISSION CONTROL</h1>
               <p className="text-xs text-gray-400 tracking-wide">Regime-Aware Multi-Agent Advisory System</p>
             </div>
-          </div>
+          </Link>
           
+          <nav style={{ display: 'flex', gap: '32px', alignItems: 'center' }} className="hidden md:flex">
+            <NavLink
+              to="/how-it-works"
+              style={({ isActive }) => ({
+                ...navLinkStyle,
+                color: isActive ? '#f5c518' : '#64748b',
+                borderBottomColor: isActive ? '#f5c518' : 'transparent',
+              })}
+            >HOW IT WORKS</NavLink>
+            <NavLink
+              to="/about"
+              style={({ isActive }) => ({
+                ...navLinkStyle,
+                color: isActive ? '#f5c518' : '#64748b',
+                borderBottomColor: isActive ? '#f5c518' : 'transparent',
+              })}
+            >ABOUT US</NavLink>
+            <NavLink
+              to="/contact"
+              style={({ isActive }) => ({
+                ...navLinkStyle,
+                color: isActive ? '#f5c518' : '#64748b',
+                borderBottomColor: isActive ? '#f5c518' : 'transparent',
+              })}
+            >CONTACT US</NavLink>
+          </nav>
+
           <div className="flex items-center gap-3">
             {user ? (
               /* Logged-in state */
@@ -128,17 +173,16 @@ export function Header({ currentRegime, user, onAuthClick, onLogout }: HeaderPro
           </div>
         </div>
 
-        {regime && (
+        {regimeData && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="flex items-center justify-between p-3 bg-gradient-to-r from-white/5 to-transparent rounded-lg border border-white/10"
           >
             <div className="flex items-center gap-3">
-              <span className="text-xl">{regime.icon}</span>
-              <div>
-                <p className="text-sm text-gray-400">Current Regime:</p>
-                <p className={`font-semibold ${regime.color}`}>{regime.label}</p>
+              <div className={`flex items-center gap-2 text-sm font-medium ${regimeData.color}`}>
+                <span>{regimeData.icon}</span>
+                <span className="hidden sm:inline font-mono tracking-widest">{regimeData.label}</span>
               </div>
             </div>
             <div className="flex items-center gap-2">

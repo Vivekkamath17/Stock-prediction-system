@@ -1,10 +1,12 @@
 import { motion } from 'motion/react';
-import { TrendingUp, TrendingDown, Newspaper, AlertTriangle, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, Newspaper, AlertTriangle, Activity, BarChart2 } from 'lucide-react';
 import type { StockData } from '../App';
 
 interface AgentPanelProps {
+  displayName?: string;
   sentimentAnalysis: StockData['sentimentAnalysis'];
-  riskAnalysis: StockData['riskAnalysis'];
+  technicalAgent: StockData['technicalAgent'];
+  isTechnicalAnalyzing?: boolean;
   isAnalyzing?: boolean;
   regimeAgent: StockData['regimeAgent'];
   isRegimeAnalyzing?: boolean;
@@ -51,8 +53,10 @@ const DEFAULT_REGIME_CONFIG = {
 };
 
 export function AgentPanel({
+  displayName,
   sentimentAnalysis,
-  riskAnalysis,
+  technicalAgent,
+  isTechnicalAnalyzing = false,
   isAnalyzing = false,
   regimeAgent,
   isRegimeAnalyzing = false,
@@ -101,7 +105,10 @@ export function AgentPanel({
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-400">Symbol:</span>
-                <span className="font-semibold text-sm">{regimeAgent.ticker}</span>
+                <div className="flex flex-col items-end">
+                  <span className="font-semibold text-sm">{displayName || regimeAgent.ticker}</span>
+                  {displayName && <span className="text-[10px] text-gray-500 font-mono tracking-wider">{regimeAgent.ticker}</span>}
+                </div>
               </div>
               <p className="text-xs text-gray-400 mt-1 leading-relaxed">{regimeCfg.desc}</p>
             </div>
@@ -183,54 +190,62 @@ export function AgentPanel({
           </div>
         </motion.div>
 
-        {/* ── RISK AGENT ── */}
+        {/* ── TECHNICAL AGENT ── */}
         <motion.div
           whileHover={{ scale: 1.02, y: -5 }}
           className="bg-gradient-to-br from-[#9C27B0]/10 to-transparent rounded-xl border border-[#9C27B0]/30 p-5 backdrop-blur-sm group hover:shadow-[0_0_30px_rgba(156,39,176,0.2)] transition-all"
         >
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 rounded-lg bg-[#9C27B0]/20">
-              <AlertTriangle className="size-5 text-[#9C27B0]" />
+              <BarChart2 className="size-5 text-[#9C27B0]" />
             </div>
-            <h3 className="font-semibold text-[#9C27B0]">RISK</h3>
+            <h3 className="font-semibold text-[#9C27B0]">TECHNICAL</h3>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-400">Level:</span>
-              <span className={`font-semibold uppercase ${
-                riskAnalysis.level === 'high' ? 'text-[#FF1744]' :
-                riskAnalysis.level === 'medium' ? 'text-[#FFD600]' :
-                'text-[#00E676]'
-              }`}>
-                {riskAnalysis.level}
-              </span>
+          {isTechnicalAnalyzing ? (
+            <div className="flex flex-col items-center justify-center py-4 text-[#9C27B0]">
+              <div className="size-8 rounded-full border-4 border-[#9C27B0]/20 border-t-[#9C27B0] animate-spin mb-3" />
+              <p className="text-sm font-semibold tracking-wide animate-pulse">COMPUTING INDICATORS...</p>
+              <p className="text-xs text-gray-400 mt-1">RSI, MACD, MA Crossovers</p>
             </div>
+          ) : technicalAgent ? (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                 <span className="text-sm text-gray-400">Signal:</span>
+                 <span className={`font-semibold uppercase ${
+                   technicalAgent.final_score >= 0.5 ? 'text-[#00E676]' :
+                   technicalAgent.final_score > 0 ? 'text-[#AEEA00]' :
+                   technicalAgent.final_score <= -0.5 ? 'text-[#FF1744]' :
+                   technicalAgent.final_score < 0 ? 'text-[#FF9100]' :
+                   'text-[#FFD600]'
+                 }`}>
+                   {technicalAgent.trend_signal}
+                 </span>
+              </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-400">Volatility:</span>
-              <span className="font-semibold">{riskAnalysis.volatility.toFixed(1)}%</span>
-            </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-400">Confidence:</span>
+                <span className="font-semibold">{technicalAgent.confidence}%</span>
+              </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-400">Alerts:</span>
-              <span className="font-semibold">
-                {riskAnalysis.alerts.length > 0 ? riskAnalysis.alerts.length : 'None'}
-              </span>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-400">RSI (14):</span>
+                <span className="font-semibold text-sm">
+                  {technicalAgent.rsi_value.toFixed(1)} 
+                  <span className="text-xs ml-1 text-gray-400">
+                    ({technicalAgent.rsi_score > 0 ? 'Bullish' : technicalAgent.rsi_score < 0 ? 'Bearish' : 'Neutral'})
+                  </span>
+                </span>
+              </div>
             </div>
-          </div>
-
-          {riskAnalysis.alerts.length > 0 && (
-            <div className="mt-3 p-2 bg-[#FF1744]/10 border border-[#FF1744]/30 rounded-lg flex items-start gap-2">
-              <AlertTriangle className="size-4 text-[#FF1744] flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-gray-300">{riskAnalysis.alerts[0]}</p>
-            </div>
+          ) : (
+            <p className="text-sm text-gray-500 py-4 text-center">Select a stock to run technicals.</p>
           )}
 
           <div className="mt-4 pt-4 border-t border-white/10">
             <div className="flex items-center gap-2 text-xs text-gray-400">
-              <div className="size-2 rounded-full bg-[#00E676] animate-pulse" />
-              <span>Active</span>
+              <div className={`size-2 rounded-full ${isTechnicalAnalyzing ? 'bg-[#FFD600]' : 'bg-[#00E676]'} animate-pulse`} />
+              <span>{isTechnicalAnalyzing ? 'Running Models...' : 'Active'}</span>
             </div>
           </div>
         </motion.div>

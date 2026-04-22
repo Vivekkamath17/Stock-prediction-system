@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { User } from '@supabase/supabase-js';
+import { Routes, Route } from 'react-router-dom';
 import { Header } from './components/Header';
 import { LaunchPad } from './components/LaunchPad';
 import { RegimeDisplay } from './components/RegimeDisplay';
@@ -8,12 +9,19 @@ import { CommandCenter } from './components/CommandCenter';
 import { FlightLogs } from './components/FlightLogs';
 import { Starfield } from './components/Starfield';
 import { AuthModal } from './components/AuthModal';
+import { LLMReportEngine } from './components/LLMReportEngine';
+import type { LLMReportEngineHandle } from './components/LLMReportEngine';
 import { supabase } from './lib/supabase';
+
+import { HowItWorks } from './pages/HowItWorks';
+import { AboutUs } from './pages/AboutUs';
+import { ContactUs } from './pages/ContactUs';
 
 export type RegimeType = 'bull' | 'bear' | 'sideways' | 'volatile';
 
 export interface StockData {
   ticker: string;
+  displayName?: string;
   regime: RegimeType;
   confidence: number;
   regimeHistory: Array<{ date: string; regime: RegimeType }>;
@@ -26,11 +34,15 @@ export interface StockData {
     newsStatus: 'positive' | 'negative' | 'neutral';
     socialStatus: 'positive' | 'negative' | 'neutral';
   };
-  riskAnalysis: {
-    level: 'low' | 'medium' | 'high';
-    volatility: number;
-    alerts: string[];
-  };
+  technicalAgent: {
+    rsi_value: number;
+    rsi_score: number;
+    macd_score: number;
+    ma_score: number;
+    final_score: number;
+    trend_signal: string;
+    confidence: number;
+  } | null;
   recommendation: {
     trend: 'upward' | 'downward' | 'sideways';
     confidenceScore: number;
@@ -39,12 +51,13 @@ export interface StockData {
   };
 }
 
-const generateMockData = (ticker: string): StockData => {
+const generateMockData = (ticker: string, displayName?: string): StockData => {
   const regimes: RegimeType[] = ['bull', 'bear', 'sideways', 'volatile'];
   const regime = regimes[Math.floor(Math.random() * regimes.length)];
   
   return {
     ticker,
+    displayName: displayName || ticker,
     regime,
     confidence: 75 + Math.random() * 20,
     regimeHistory: [
@@ -61,11 +74,7 @@ const generateMockData = (ticker: string): StockData => {
       newsStatus: regime === 'bull' ? 'positive' : regime === 'bear' ? 'negative' : 'neutral',
       socialStatus: regime === 'bull' ? 'positive' : regime === 'bear' ? 'negative' : 'neutral',
     },
-    riskAnalysis: {
-      level: regime === 'volatile' ? 'high' : 'medium',
-      volatility: 10 + Math.random() * 20,
-      alerts: regime === 'volatile' ? ['High volatility detected'] : [],
-    },
+    technicalAgent: null,
     recommendation: {
       trend: regime === 'bull' ? 'upward' : regime === 'bear' ? 'downward' : 'sideways',
       confidenceScore: 70 + Math.random() * 25,
@@ -86,6 +95,11 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
+  // Ref to LLMReportEngine — used to call view/export from CommandCenter buttons
+  const llmEngineRef = useRef<LLMReportEngineHandle>(null);
+  const handleViewDetails = () => llmEngineRef.current?.triggerViewDetails();
+  const handleExportReport = () => llmEngineRef.current?.triggerExport();
+
   // Bootstrap auth state from Supabase session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -102,14 +116,16 @@ export default function App() {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isRegimeAnalyzing, setIsRegimeAnalyzing] = useState(false);
+  const [isTechnicalAnalyzing, setIsTechnicalAnalyzing] = useState(false);
 
   const handleSearch = async (ticker: string, name?: string) => {
     setSelectedTicker(ticker);
-    setStockData(generateMockData(ticker));
+    setStockData(generateMockData(ticker, name));
 
-    // Fire both agents in parallel
+    // Fire all agents in parallel
     setIsAnalyzing(true);
     setIsRegimeAnalyzing(true);
+    setIsTechnicalAnalyzing(true);
 
     // ---- Sentiment Agent ----
     const sentimentPromise = (async () => {
@@ -159,7 +175,25 @@ export default function App() {
       }
     })();
 
-    await Promise.allSettled([sentimentPromise, regimePromise]);
+    // ---- Technical Agent ----
+    const technicalPromise = (async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/api/technical/${ticker}`);
+        const result = await response.json();
+        if (result.success && result.data) {
+          setStockData(prev => {
+            if (!prev) return prev;
+            return { ...prev, technicalAgent: result.data };
+          });
+        }
+      } catch (err) {
+        console.error('Technical fetch failed:', err);
+      } finally {
+        setIsTechnicalAnalyzing(false);
+      }
+    })();
+
+    await Promise.allSettled([sentimentPromise, regimePromise, technicalPromise]);
   };
 
   const handleLogout = async () => {
@@ -188,42 +222,70 @@ export default function App() {
 
   return (
     <>
-      <div className="min-h-screen bg-[#0A1128] text-white relative overflow-hidden">
+      <div className="min-h-screen bg-[#0A1128] text-white relative">
         <Starfield />
         
         <div className="relative z-10">
           <Header
-            currentRegime={stockData?.regime}
+            currentRegime={stockData?.regimeAgent?.regime || ''}
             user={user}
             onAuthClick={() => setAuthModalOpen(true)}
             onLogout={handleLogout}
           />
           
-          <main className="container mx-auto px-4 py-8 space-y-8">
-            <LaunchPad onSearch={handleSearch} selectedTicker={selectedTicker} />
-            
-            {stockData && (
-              <>
-                <RegimeDisplay 
-                  regime={stockData.regime}
-                  confidence={stockData.confidence}
-                  regimeHistory={stockData.regimeHistory}
-                />
+          <Routes>
+            <Route path="/" element={
+              <main className="container mx-auto px-4 py-8 space-y-8">
+                <LaunchPad onSearch={handleSearch} selectedTicker={selectedTicker} user={user} />
                 
-                <AgentPanel
-                  sentimentAnalysis={stockData.sentimentAnalysis}
-                  riskAnalysis={stockData.riskAnalysis}
-                  isAnalyzing={isAnalyzing}
-                  regimeAgent={stockData.regimeAgent}
-                  isRegimeAnalyzing={isRegimeAnalyzing}
-                />
-                
-                <CommandCenter recommendation={stockData.recommendation} />
-                
-                <FlightLogs ticker={stockData.ticker} regime={stockData.regime} />
-              </>
-            )}
-          </main>
+                {stockData && (
+                  <>
+                    <RegimeDisplay 
+                      regimeData={stockData.regimeAgent}
+                      technicalData={stockData.technicalAgent}
+                      isLoading={isRegimeAnalyzing || isTechnicalAnalyzing}
+                    />
+                    
+                    <AgentPanel
+                      displayName={stockData.displayName}
+                      sentimentAnalysis={stockData.sentimentAnalysis}
+                      technicalAgent={stockData.technicalAgent}
+                      isTechnicalAnalyzing={isTechnicalAnalyzing}
+                      isAnalyzing={isAnalyzing}
+                      regimeAgent={stockData.regimeAgent}
+                      isRegimeAnalyzing={isRegimeAnalyzing}
+                    />
+                    
+                    <CommandCenter
+                      recommendation={stockData.recommendation}
+                      onViewDetails={handleViewDetails}
+                      onExportReport={handleExportReport}
+                    />
+                    
+                    <LLMReportEngine
+                      ref={llmEngineRef}
+                      ticker={stockData.ticker}
+                      displayName={stockData.displayName}
+                      exchange="NSE"
+                      technicalOutput={stockData.technicalAgent}
+                      regimeOutput={stockData.regimeAgent}
+                      sentimentOutput={stockData.sentimentAnalysis}
+                      recommendation={stockData.recommendation}
+                    />
+                    
+                    <FlightLogs 
+                      ticker={stockData.ticker} 
+                      displayName={stockData.displayName} 
+                      regime={stockData.regime} 
+                    />
+                  </>
+                )}
+              </main>
+            } />
+            <Route path="/how-it-works" element={<HowItWorks />} />
+            <Route path="/about" element={<AboutUs />} />
+            <Route path="/contact" element={<ContactUs />} />
+          </Routes>
         </div>
       </div>
 

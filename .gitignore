@@ -1,4 +1,5 @@
 # Environments
+front-end/build/
 .env
 .venv
 env/

@@ -9,7 +9,7 @@ interface AuthModalProps {
   onAuthChange: (user: any) => void;
 }
 
-type AuthView = 'login' | 'register';
+type AuthView = 'login' | 'register' | 'email-confirmation';
 
 export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
   const [view, setView] = useState<AuthView>('login');
@@ -81,13 +81,13 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
             full_name: regName,
             phone: regPhone,
           },
+          emailRedirectTo: window.location.origin,
         },
       });
       if (authError) throw authError;
       if (data.user && !data.session) {
         // Email confirmation required
-        setSuccess('Account created! Please check your email to confirm your account, then log in.');
-        switchView('login');
+        setView('email-confirmation');
       } else if (data.user) {
         onAuthChange(data.user);
         onClose();
@@ -169,12 +169,13 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                   MARKET MISSION CONTROL
                 </p>
                 <p style={{ fontSize: '0.72rem', color: '#6b7280', letterSpacing: '0.05em' }}>
-                  {view === 'login' ? 'Commander Authentication' : 'Mission Enrollment'}
+                  {view === 'login' ? 'Commander Authentication' : view === 'email-confirmation' ? 'Verification Required' : 'Mission Enrollment'}
                 </p>
               </div>
             </div>
 
             {/* Tab switcher */}
+            {view !== 'email-confirmation' && (
             <div style={{
               display: 'grid',
               gridTemplateColumns: '1fr 1fr',
@@ -208,6 +209,7 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                 </button>
               ))}
             </div>
+            )}
 
             {/* Error / Success banners */}
             <AnimatePresence>
@@ -262,7 +264,7 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                   <AuthInput
                     icon={<Mail size={15} />}
                     type="email"
-                    placeholder="Mission Email"
+                    placeholder="Email"
                     value={loginEmail}
                     onChange={setLoginEmail}
                     required
@@ -270,7 +272,7 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                   <AuthInput
                     icon={<Lock size={15} />}
                     type={showPass ? 'text' : 'password'}
-                    placeholder="Access Code"
+                    placeholder="Password"
                     value={loginPassword}
                     onChange={setLoginPassword}
                     required
@@ -280,9 +282,9 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                       </button>
                     }
                   />
-                  <SubmitButton loading={loading} label="Initiate Launch Sequence" />
+                  <SubmitButton loading={loading} label="SIGN IN" />
                 </motion.form>
-              ) : (
+              ) : view === 'register' ? (
                 <motion.form
                   key="register"
                   initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }}
@@ -290,13 +292,13 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                   onSubmit={handleRegister}
                   style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}
                 >
-                  <AuthInput icon={<User size={15} />} type="text" placeholder="Commander Name" value={regName} onChange={setRegName} required />
-                  <AuthInput icon={<Phone size={15} />} type="tel" placeholder="Comms Channel (Phone)" value={regPhone} onChange={setRegPhone} />
-                  <AuthInput icon={<Mail size={15} />} type="email" placeholder="Mission Email" value={regEmail} onChange={setRegEmail} required />
+                  <AuthInput icon={<User size={15} />} type="text" placeholder="Full Name" value={regName} onChange={setRegName} required />
+                  <AuthInput icon={<Phone size={15} />} type="tel" placeholder="Phone Number" value={regPhone} onChange={setRegPhone} />
+                  <AuthInput icon={<Mail size={15} />} type="email" placeholder="Email" value={regEmail} onChange={setRegEmail} required />
                   <AuthInput
                     icon={<Lock size={15} />}
                     type={showPass ? 'text' : 'password'}
-                    placeholder="Create Access Code"
+                    placeholder="Password"
                     value={regPassword}
                     onChange={setRegPassword}
                     required
@@ -309,7 +311,7 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                   <AuthInput
                     icon={<Lock size={15} />}
                     type={showConfirmPass ? 'text' : 'password'}
-                    placeholder="Confirm Access Code"
+                    placeholder="Confirm Password"
                     value={regConfirmPassword}
                     onChange={setRegConfirmPassword}
                     required
@@ -319,22 +321,49 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
                       </button>
                     }
                   />
-                  <SubmitButton loading={loading} label="Enroll in Mission" />
+                  <SubmitButton loading={loading} label="REGISTER" />
                 </motion.form>
+              ) : (
+                <motion.div
+                  key="email-confirmation"
+                  initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.18 }}
+                  style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', padding: '16px 8px' }}
+                >
+                  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#f5c518" strokeWidth="1.5">
+                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                    <path d="M2 7l10 7 10-7"/>
+                  </svg>
+                  <h2 style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: '24px', color: '#e2e8f0', fontWeight: 700, margin: 0 }}>Check Your Email</h2>
+                  <p style={{ fontSize: '14px', color: '#64748b', margin: 0 }}>We've sent a confirmation link to:</p>
+                  <div style={{ fontFamily: '"Space Mono", monospace', fontSize: '13px', color: '#f5c518', fontWeight: 700 }}>{regEmail}</div>
+                  <p style={{ fontSize: '14px', color: '#94a3b8', lineHeight: 1.6, margin: 0 }}>Click the link in the email to activate your account before signing in.</p>
+                  <p style={{ fontSize: '11px', color: '#64748b', fontFamily: '"Space Mono", monospace', margin: 0 }}>Didn't receive it? Check your spam folder.</p>
+                  <button
+                    onClick={() => switchView('login')}
+                    style={{
+                      width: '100%', padding: '0.75rem', fontSize: '0.82rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer', border: 'none', borderRadius: '0.625rem', background: 'linear-gradient(135deg, #FF6B35 0%, #ff5500 100%)', color: '#fff', marginTop: '16px'
+                    }}
+                  >
+                    BACK TO SIGN IN
+                  </button>
+                </motion.div>
               )}
             </AnimatePresence>
 
             {/* Footer hint */}
+            {view !== 'email-confirmation' && (
             <p style={{ textAlign: 'center', fontSize: '0.73rem', color: '#4b5563', marginTop: '1.25rem' }}>
-              {view === 'login' ? "New to mission control? " : "Already a commander? "}
+              {view === 'login' ? "New user? " : "Already have an account? "}
               <button
                 type="button"
                 onClick={() => switchView(view === 'login' ? 'register' : 'login')}
                 style={{ color: '#FF6B35', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 }}
               >
-                {view === 'login' ? 'Enroll here' : 'Sign in'}
+                {view === 'login' ? 'Register' : 'Sign in'}
               </button>
             </p>
+            )}
           </motion.div>
         </motion.div>
       )}
