@@ -174,6 +174,54 @@ app.get('/api/technical/:ticker', (req, res) => {
   });
 });
 
+// Execute the Decision Fusion Agent
+app.get('/api/fusion/:ticker', (req, res) => {
+  const { ticker } = req.params;
+  const exchange = req.query.exchange || 'NSE';
+  console.log(`[API] Triggering Decision Fusion Agent for ${ticker} (${exchange})`);
+
+  const pythonProcess = spawn('python', [
+    path.join(__dirname, 'models', 'decision_fusion_agent.py'),
+    ticker,
+    exchange
+  ], {
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    cwd: path.join(__dirname, '..')  // run from project root so dotenv finds .env
+  });
+
+  let outputData = '';
+  let errorData = '';
+
+  pythonProcess.stdout.on('data', (data) => {
+    outputData += data.toString();
+    console.log(data.toString());
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    errorData += data.toString();
+  });
+
+  pythonProcess.on('close', (code) => {
+    const jsonRegex = /---JSON_OUTPUT---(.*?)---JSON_OUTPUT---/s;
+    const match = outputData.match(jsonRegex);
+
+    if (match && match[1]) {
+      try {
+        const fusionData = JSON.parse(match[1].trim());
+        if (fusionData.error) {
+          return res.status(422).json({ success: false, error: fusionData.error });
+        }
+        res.json({ success: true, data: fusionData });
+      } catch (err) {
+        res.status(500).json({ success: false, error: 'Failed to parse Fusion JSON.' });
+      }
+    } else {
+      console.error(`Fusion agent stderr: ${errorData}`);
+      res.status(500).json({ success: false, error: 'Fusion agent returned no output.' });
+    }
+  });
+});
+
 // Execute the Python Price History script
 app.get('/api/price-history', (req, res) => {
   const ticker = req.query.ticker || '^NSEI';
@@ -227,22 +275,23 @@ app.get('/api/price-history', (req, res) => {
 // ── NEWS HEADLINES ENDPOINT ────────────────────────────────────────────────────
 // Serves the news CSV that the regime agent writes to server/news.csv
 // Falls back to any *NewsAPI* or *News* CSV if news.csv is absent
-app.get('/api/news-headlines', (req, res) => {
+app.get('/api/news-headlines/:ticker', (req, res) => {
+  const { ticker } = req.params;
   const fs = require('fs');
   const pathModule = require('path');
 
-  // Candidate paths: prefer news.csv, fall back to any *News*.csv in server/
+  // Candidate paths: prefer Combined_News.csv, fall back to any *News*.csv in server/
   const serverDir = __dirname;
-  let csvPath = pathModule.join(serverDir, 'news.csv');
+  let csvPath = pathModule.join(serverDir, `${ticker}_Combined_News.csv`);
 
   if (!fs.existsSync(csvPath)) {
-    // Try to find any *News*.csv the regime agent may have written
+    // Try to find any *News*.csv the regime agent may have written that matches the ticker
     const files = fs.readdirSync(serverDir);
-    const fallback = files.find(f => /news/i.test(f) && f.endsWith('.csv'));
+    const fallback = files.find(f => f.includes(ticker) && /news/i.test(f) && f.endsWith('.csv'));
     if (fallback) {
       csvPath = pathModule.join(serverDir, fallback);
     } else {
-      return res.json({ headlines: [], error: 'news.csv not found', count: 0 });
+      return res.json({ headlines: [], error: `No news CSV found for ${ticker}`, count: 0 });
     }
   }
 

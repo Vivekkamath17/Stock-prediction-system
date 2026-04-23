@@ -1,8 +1,8 @@
 {
-  "ticker": "INFY.NS",
+  "ticker": "INDUSINDBK.NS",
   "regime": "Sideways",
   "trained_on": "2026-04-24",
   "n_train": 661,
-  "accuracy": 50.6,
+  "accuracy": 53.0,
   "period": "10y"
 }

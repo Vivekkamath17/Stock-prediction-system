@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
 
 interface LaunchPadProps {
-  onSearch: (ticker: string, name?: string) => void;
+  onSearch: (ticker: string, name?: string, yfinanceTicker?: string) => void;
   selectedTicker: string;
   user?: any;
 }
@@ -14,6 +14,7 @@ interface StockEntry {
   id: string;
   Stock: string;
   Ticker: string;
+  yfinance_ticker?: string;
 }
 
 export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
@@ -49,7 +50,7 @@ export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
     }
     const { data } = await supabase
       .from('favourites')
-      .select('id, stock_id, Stocks(id, Stock, Ticker)')
+      .select('id, stock_id, Stocks(id, Stock, Ticker, yfinance_ticker)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: true });
     if (data) setFavourites(data);
@@ -99,7 +100,7 @@ export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
 
     const { data, error } = await supabase
       .from('Stocks')
-      .select('id, Stock, Ticker')
+      .select('id, Stock, Ticker, yfinance_ticker')
       .ilike('Stock', `%${value}%`)
       .limit(8);
 
@@ -118,7 +119,7 @@ export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
 
   const handleGo = () => {
     if (!selectedStock) return;
-    onSearch(selectedStock.Ticker, selectedStock.Stock);
+    onSearch(selectedStock.Ticker, selectedStock.Stock, selectedStock.yfinance_ticker);
   };
 
   // Add favourite search logic
@@ -128,7 +129,7 @@ export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
     if (value.length < 2) { setFavSuggestions([]); return; }
     const { data } = await supabase
       .from('Stocks')
-      .select('id, Stock, Ticker')
+      .select('id, Stock, Ticker, yfinance_ticker')
       .ilike('Stock', `%${value}%`)
       .limit(8);
     if (data) setFavSuggestions(data);
@@ -379,7 +380,7 @@ export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
                     e.stopPropagation();
                     setQuery(fav.Stocks.Stock);
                     setSelectedStock(fav.Stocks);
-                    onSearch(fav.Stocks.Ticker, fav.Stocks.Stock);
+                    onSearch(fav.Stocks.Ticker, fav.Stocks.Stock, fav.Stocks.yfinance_ticker);
                   }}
                 >
                   {fav.Stocks.Ticker.replace('.NS','').replace('.BO','')}

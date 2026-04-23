@@ -42,7 +42,7 @@ DEFAULT_PERIOD = "10y"
 N_HMM_STATES  = 4
 HMM_ITERATIONS = 2000
 PERSISTENCE_DAYS = 3
-CONFIDENCE_WINDOW = 3           # P2 FIX: average proba over last 3 observations (matches persistence)
+CONFIDENCE_WINDOW = 30          # Increased to 30 days for macro trend stability
 MODEL_DIR      = "models/"
 HMM_MODEL_PATH = "models/nifty_hmm.pkl"
 RANDOM_STATE   = 42
@@ -257,24 +257,19 @@ class RegimeAgent:
         recent_scaled = self.scaled_features[-60:]
         all_preds     = self.hmm.predict(recent_scaled)
 
-        # ---- Persistence filter ----
-        last_n        = all_preds[-PERSISTENCE_DAYS:]
-        counts        = np.bincount(last_n, minlength=N_HMM_STATES)
-        winning_state = int(counts.argmax())
-        persistent    = bool(counts[winning_state] >= 2)
-
-        if not persistent:
-            winning_state = int(all_preds[-2])
-            print("  [RegimeAgent] Persistence filter failed -- "
-                  "falling back to previous day state: %d" % winning_state)
+        # ---- Probability Moving Average Filter ----
+        # Instead of Viterbi sequence mode, we take the average marginal probability 
+        # over the last CONFIDENCE_WINDOW days. This naturally smooths flickering 
+        # and guarantees the winning state mathematically matches the highest confidence.
+        window_obs  = recent_scaled[-CONFIDENCE_WINDOW:]           # shape: (3, 3)
+        all_probs   = self.hmm.predict_proba(window_obs)           # shape: (3, n_states)
+        avg_probs   = all_probs.mean(axis=0)                       # shape: (n_states,)
+        
+        winning_state = int(avg_probs.argmax())
+        confidence    = round(float(avg_probs[winning_state]) * 100, 1)
+        persistent    = bool(confidence >= 40.0) # Arbitrary threshold for UI
 
         regime_string = self.state_map.get(winning_state, "Sideways")
-
-        # ---- P2 FIX: average predict_proba over last CONFIDENCE_WINDOW obs ----
-        window_obs  = recent_scaled[-CONFIDENCE_WINDOW:]           # shape: (10, 3)
-        all_probs   = self.hmm.predict_proba(window_obs)           # shape: (10, n_states)
-        avg_probs   = all_probs.mean(axis=0)                       # shape: (n_states,)
-        confidence  = round(float(avg_probs[winning_state]) * 100, 1)
 
         state_probs = {
             self.state_map.get(i, "State%d" % i): round(float(p), 4)

@@ -43,6 +43,19 @@ export interface StockData {
     trend_signal: string;
     confidence: number;
   } | null;
+  fusionAgent: {
+    regime: any;
+    specialist: {
+      ticker: string;
+      signal: string;
+      probability: number;
+      conviction: string;
+      regime_used: string;
+      regime_confidence: number;
+      model_accuracy: number;
+      as_of_date: string;
+    };
+  } | null;
   recommendation: {
     trend: 'upward' | 'downward' | 'sideways';
     confidenceScore: number;
@@ -75,6 +88,7 @@ const generateMockData = (ticker: string, displayName?: string): StockData => {
       socialStatus: regime === 'bull' ? 'positive' : regime === 'bear' ? 'negative' : 'neutral',
     },
     technicalAgent: null,
+    fusionAgent: null,
     recommendation: {
       trend: regime === 'bull' ? 'upward' : regime === 'bear' ? 'downward' : 'sideways',
       confidenceScore: 70 + Math.random() * 25,
@@ -115,17 +129,17 @@ export default function App() {
   }, []);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isRegimeAnalyzing, setIsRegimeAnalyzing] = useState(false);
   const [isTechnicalAnalyzing, setIsTechnicalAnalyzing] = useState(false);
+  const [isFusionAnalyzing, setIsFusionAnalyzing] = useState(false);
 
-  const handleSearch = async (ticker: string, name?: string) => {
+  const handleSearch = async (ticker: string, name?: string, yfinanceTicker?: string) => {
     setSelectedTicker(ticker);
     setStockData(generateMockData(ticker, name));
 
     // Fire all agents in parallel
     setIsAnalyzing(true);
-    setIsRegimeAnalyzing(true);
     setIsTechnicalAnalyzing(true);
+    setIsFusionAnalyzing(true);
 
     // ---- Sentiment Agent ----
     const sentimentPromise = (async () => {
@@ -157,28 +171,11 @@ export default function App() {
       }
     })();
 
-    // ---- Regime Agent ----
-    const regimePromise = (async () => {
-      try {
-        const response = await fetch(`http://localhost:5000/api/regime/${ticker}`);
-        const result = await response.json();
-        if (result.success && result.data) {
-          setStockData(prev => {
-            if (!prev) return prev;
-            return { ...prev, regimeAgent: result.data };
-          });
-        }
-      } catch (err) {
-        console.error('Regime fetch failed:', err);
-      } finally {
-        setIsRegimeAnalyzing(false);
-      }
-    })();
-
     // ---- Technical Agent ----
     const technicalPromise = (async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/technical/${ticker}`);
+        const targetTicker = yfinanceTicker || ticker;
+        const response = await fetch(`http://localhost:5000/api/technical/${targetTicker}`);
         const result = await response.json();
         if (result.success && result.data) {
           setStockData(prev => {
@@ -193,7 +190,30 @@ export default function App() {
       }
     })();
 
-    await Promise.allSettled([sentimentPromise, regimePromise, technicalPromise]);
+    // ---- Decision Fusion Agent ----
+    const fusionPromise = (async () => {
+      try {
+        const targetTicker = yfinanceTicker || ticker;
+        const response = await fetch(`http://localhost:5000/api/fusion/${targetTicker}`);
+        const result = await response.json();
+        if (result.success && result.data) {
+          setStockData(prev => {
+            if (!prev) return prev;
+            return { 
+              ...prev, 
+              fusionAgent: result.data,
+              regimeAgent: result.data.regime // Seamlessly populate existing UI components
+            };
+          });
+        }
+      } catch (err) {
+        console.error('Fusion fetch failed:', err);
+      } finally {
+        setIsFusionAnalyzing(false);
+      }
+    })();
+
+    await Promise.allSettled([sentimentPromise, technicalPromise, fusionPromise]);
   };
 
   const handleLogout = async () => {
@@ -243,7 +263,7 @@ export default function App() {
                     <RegimeDisplay 
                       regimeData={stockData.regimeAgent}
                       technicalData={stockData.technicalAgent}
-                      isLoading={isRegimeAnalyzing || isTechnicalAnalyzing}
+                      isLoading={isFusionAnalyzing || isTechnicalAnalyzing}
                     />
                     
                     <AgentPanel
@@ -252,8 +272,8 @@ export default function App() {
                       technicalAgent={stockData.technicalAgent}
                       isTechnicalAnalyzing={isTechnicalAnalyzing}
                       isAnalyzing={isAnalyzing}
-                      regimeAgent={stockData.regimeAgent}
-                      isRegimeAnalyzing={isRegimeAnalyzing}
+                      fusionAgent={stockData.fusionAgent}
+                      isFusionAnalyzing={isFusionAnalyzing}
                     />
                     
                     <CommandCenter
@@ -270,6 +290,7 @@ export default function App() {
                       technicalOutput={stockData.technicalAgent}
                       regimeOutput={stockData.regimeAgent}
                       sentimentOutput={stockData.sentimentAnalysis}
+                      fusionOutput={stockData.fusionAgent}
                       recommendation={stockData.recommendation}
                       onReportGenerated={(reasoning) => {
                         setStockData(prev => prev ? {

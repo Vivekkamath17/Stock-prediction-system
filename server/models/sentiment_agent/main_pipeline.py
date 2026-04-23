@@ -138,19 +138,26 @@ def run_prediction_pipeline(stock_name: str, ticker: str, indian_api_key: str, n
     
     # 2. COMBINE DATA
     print("[2/3] Processing Data...")
-    all_headlines = []
+    dfs = []
     if not df_live.empty:
-        all_headlines.extend(df_live['Headline'].tolist())
+        dfs.append(df_live)
     if not df_history.empty:
-        all_headlines.extend(df_history['Headline'].tolist())
+        dfs.append(df_history)
         
-    # Remove duplicates by converting to a set, then back to a list
-    all_headlines = list(set(all_headlines))
-    print(f" -> Prepared {len(all_headlines)} unique headlines for the Agent.")
-
-    if not all_headlines:
+    if not dfs:
         print("\nNo news found across both APIs. Aborting AI analysis.")
         return
+        
+    df_combined = pd.concat(dfs, ignore_index=True)
+    # Drop exact duplicates based on Headline
+    df_combined.drop_duplicates(subset=["Headline"], inplace=True)
+    
+    # Save the combined DataFrame so the frontend can display BOTH sources
+    combined_csv_name = f"{ticker}_Combined_News.csv"
+    df_combined.to_csv(combined_csv_name, index=False)
+    print(f" -> Saved {len(df_combined)} unique headlines to {combined_csv_name}")
+
+    all_headlines = df_combined["Headline"].tolist()
 
     # 3. UNLEASH THE AGENT
     print("\n[3/3] Unleashing Editorial Agent & Querying FastAPI...")

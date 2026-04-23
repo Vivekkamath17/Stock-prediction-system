@@ -187,7 +187,10 @@ class SpecialistModelManager:
         # Trend & Momentum
         ema20 = ta.ema(close, length=20)
         ema50 = ta.ema(close, length=50)
-        df["ema_20_50_cross"] = (ema20 - ema50) / ema50.replace(0, np.nan)
+        if ema20 is not None and ema50 is not None:
+            df["ema_20_50_cross"] = (ema20 - ema50) / ema50.replace(0, np.nan)
+        else:
+            df["ema_20_50_cross"] = np.nan
         
         adx_df = ta.adx(df["High"], df["Low"], close, length=14)
         if adx_df is not None and not adx_df.empty:
@@ -196,7 +199,8 @@ class SpecialistModelManager:
             df["adx_14"] = np.nan
             
         # Volatility
-        df["atr_14_norm"] = ta.atr(df["High"], df["Low"], close, length=14) / close
+        atr = ta.atr(df["High"], df["Low"], close, length=14)
+        df["atr_14_norm"] = atr / close if atr is not None else np.nan
         
         # Oscillators
         stoch_df = ta.stoch(df["High"], df["Low"], close, k=14, d=3, smooth_k=3)
@@ -207,9 +211,16 @@ class SpecialistModelManager:
             
         # Price Action
         sma50 = ta.sma(close, length=50)
+        if sma50 is not None:
+            df["dist_sma_50"] = (close - sma50) / sma50.replace(0, np.nan)
+        else:
+            df["dist_sma_50"] = np.nan
+            
         sma200 = ta.sma(close, length=200)
-        df["dist_sma_50"] = (close - sma50) / sma50.replace(0, np.nan)
-        df["dist_sma_200"] = (close - sma200) / sma200.replace(0, np.nan)
+        if sma200 is not None:
+            df["dist_sma_200"] = (close - sma200) / sma200.replace(0, np.nan)
+        else:
+            df["dist_sma_200"] = np.nan
 
         # Returns & Volume
         df["return_5d"]    = close.pct_change(5)

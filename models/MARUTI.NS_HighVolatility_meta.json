@@ -1,8 +1,8 @@
 {
-  "ticker": "INFY.NS",
+  "ticker": "MARUTI.NS",
   "regime": "HighVolatility",
   "trained_on": "2026-04-24",
   "n_train": 536,
-  "accuracy": 46.3,
+  "accuracy": 53.7,
   "period": "10y"
 }

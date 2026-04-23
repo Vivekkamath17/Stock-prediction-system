@@ -8,8 +8,8 @@ interface AgentPanelProps {
   technicalAgent: StockData['technicalAgent'];
   isTechnicalAnalyzing?: boolean;
   isAnalyzing?: boolean;
-  regimeAgent: StockData['regimeAgent'];
-  isRegimeAnalyzing?: boolean;
+  fusionAgent: StockData['fusionAgent'];
+  isFusionAnalyzing?: boolean;
 }
 
 // Visual config for each regime label returned by the Python HMM agent
@@ -58,11 +58,11 @@ export function AgentPanel({
   technicalAgent,
   isTechnicalAnalyzing = false,
   isAnalyzing = false,
-  regimeAgent,
-  isRegimeAnalyzing = false,
+  fusionAgent,
+  isFusionAnalyzing = false,
 }: AgentPanelProps) {
-  const regimeCfg = regimeAgent
-    ? (REGIME_CONFIG[regimeAgent.regime] ?? DEFAULT_REGIME_CONFIG)
+  const regimeCfg = fusionAgent?.regime
+    ? (REGIME_CONFIG[fusionAgent.regime.regime] ?? DEFAULT_REGIME_CONFIG)
     : DEFAULT_REGIME_CONFIG;
 
   return (
@@ -74,41 +74,38 @@ export function AgentPanel({
     >
       <h2 className="text-xl font-semibold">AGENT ANALYSIS - STOCK CREW REPORTS</h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
 
-        {/* ── REGIME AGENT ── */}
+        {/* ── MARKET REGIME ── */}
         <motion.div
           whileHover={{ scale: 1.02, y: -5 }}
           className={`bg-gradient-to-br ${regimeCfg.bg} to-transparent rounded-xl border ${regimeCfg.border} p-5 backdrop-blur-sm group transition-all`}
-          style={{ boxShadow: isRegimeAnalyzing ? 'none' : `0 0 30px ${regimeCfg.color}33` }}
+          style={{ boxShadow: isFusionAnalyzing ? 'none' : `0 0 30px ${regimeCfg.color}33` }}
         >
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 rounded-lg" style={{ backgroundColor: `${regimeCfg.color}20` }}>
               {regimeCfg.icon}
             </div>
-            <h3 className="font-semibold" style={{ color: regimeCfg.color }}>REGIME</h3>
+            <h3 className="font-semibold" style={{ color: regimeCfg.color }}>MARKET REGIME</h3>
           </div>
 
-          {isRegimeAnalyzing ? (
+          {isFusionAnalyzing ? (
             <div className="flex flex-col items-center justify-center py-4" style={{ color: '#1E88E5' }}>
               <div className="size-8 rounded-full border-4 border-[#1E88E5]/20 border-t-[#1E88E5] animate-spin mb-3" />
               <p className="text-sm font-semibold tracking-wide animate-pulse">TRAINING HMM...</p>
-              <p className="text-xs text-gray-400 mt-1">Fetching 3y historical data</p>
+              <p className="text-xs text-gray-400 mt-1">Fetching historical data</p>
             </div>
-          ) : regimeAgent ? (
+          ) : fusionAgent?.regime ? (
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-400">Regime:</span>
                 <span className="font-bold text-lg uppercase" style={{ color: regimeCfg.color }}>
-                  {regimeAgent.regime}
+                  {fusionAgent.regime.regime}
                 </span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-400">Symbol:</span>
-                <div className="flex flex-col items-end">
-                  <span className="font-semibold text-sm">{displayName || regimeAgent.ticker}</span>
-                  {displayName && <span className="text-[10px] text-gray-500 font-mono tracking-wider">{regimeAgent.ticker}</span>}
-                </div>
+                <span className="text-sm text-gray-400">Confidence:</span>
+                <span className="font-semibold text-sm">{fusionAgent.regime.confidence.toFixed(1)}%</span>
               </div>
               <p className="text-xs text-gray-400 mt-1 leading-relaxed">{regimeCfg.desc}</p>
             </div>
@@ -120,9 +117,9 @@ export function AgentPanel({
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <div
                 className="size-2 rounded-full animate-pulse"
-                style={{ backgroundColor: isRegimeAnalyzing ? '#FFD600' : regimeCfg.color }}
+                style={{ backgroundColor: isFusionAnalyzing ? '#FFD600' : regimeCfg.color }}
               />
-              <span>{isRegimeAnalyzing ? 'Training Gaussian HMM...' : 'HMM Active'}</span>
+              <span>{isFusionAnalyzing ? 'Training Gaussian HMM...' : 'HMM Active'}</span>
             </div>
           </div>
         </motion.div>
@@ -246,6 +243,60 @@ export function AgentPanel({
             <div className="flex items-center gap-2 text-xs text-gray-400">
               <div className={`size-2 rounded-full ${isTechnicalAnalyzing ? 'bg-[#FFD600]' : 'bg-[#00E676]'} animate-pulse`} />
               <span>{isTechnicalAnalyzing ? 'Running Models...' : 'Active'}</span>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* ── FUSION / SPECIALIST AGENT ── */}
+        <motion.div
+          whileHover={{ scale: 1.02, y: -5 }}
+          className="bg-gradient-to-br from-[#00E5FF]/10 to-transparent rounded-xl border border-[#00E5FF]/30 p-5 backdrop-blur-sm group hover:shadow-[0_0_30px_rgba(0,229,255,0.2)] transition-all"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-[#00E5FF]/20">
+              <Activity className="size-5 text-[#00E5FF]" />
+            </div>
+            <h3 className="font-semibold text-[#00E5FF]">SPECIALIST</h3>
+          </div>
+
+          {isFusionAnalyzing ? (
+            <div className="flex flex-col items-center justify-center py-4 text-[#00E5FF]">
+              <div className="size-8 rounded-full border-4 border-[#00E5FF]/20 border-t-[#00E5FF] animate-spin mb-3" />
+              <p className="text-sm font-semibold tracking-wide animate-pulse">RUNNING XGBOOST...</p>
+              <p className="text-xs text-gray-400 mt-1">Decision Fusion in progress</p>
+            </div>
+          ) : fusionAgent ? (
+             <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                 <span className="text-sm text-gray-400">Signal:</span>
+                 <span className={`font-bold uppercase ${
+                   fusionAgent.specialist.signal === 'BUY' ? 'text-[#00E676]' :
+                   fusionAgent.specialist.signal === 'SELL' ? 'text-[#FF1744]' :
+                   'text-[#FFD600]'
+                 }`}>
+                   {fusionAgent.specialist.signal}
+                 </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-400">Probability Up:</span>
+                <span className="font-semibold">{(fusionAgent.specialist.probability * 100).toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-400">Regime Model:</span>
+                <span className="font-semibold text-sm text-right">
+                  {fusionAgent.specialist.regime_used} <br/>
+                  <span className="text-xs text-gray-400">({fusionAgent.specialist.model_accuracy.toFixed(1)}% Acc)</span>
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 py-4 text-center">Select a stock to run fusion.</p>
+          )}
+
+          <div className="mt-4 pt-4 border-t border-white/10">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <div className={`size-2 rounded-full ${isFusionAnalyzing ? 'bg-[#FFD600]' : 'bg-[#00E676]'} animate-pulse`} />
+              <span>{isFusionAnalyzing ? 'Fusing decisions...' : 'XGBoost Active'}</span>
             </div>
           </div>
         </motion.div>

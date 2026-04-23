@@ -34,6 +34,7 @@ import {
   Clock,
 } from 'lucide-react';
 import type { StockData } from '../App';
+import html2pdf from 'html2pdf.js';
 
 // ── Groq API key — set VITE_GROQ_API_KEY in front-end/.env ────────
 // Get free key at https://console.groq.com
@@ -54,6 +55,7 @@ export interface LLMReportEngineProps {
   technicalOutput: StockData['technicalAgent'];
   regimeOutput:    StockData['regimeAgent'];
   sentimentOutput: StockData['sentimentAnalysis'];
+  fusionOutput?:   StockData['fusionAgent'];
   recommendation:  StockData['recommendation'];
   onReportGenerated?: (report: string) => void;
 }
@@ -85,7 +87,7 @@ function regimeColors(regime: string) {
 
 // ── Prompt builder ─────────────────────────────────────────────────
 function buildPrompt(props: LLMReportEngineProps, headlines: NewsRow[]): string {
-  const { ticker, displayName, exchange, technicalOutput, regimeOutput, sentimentOutput, recommendation } = props;
+  const { ticker, displayName, exchange, technicalOutput, regimeOutput, sentimentOutput, fusionOutput, recommendation } = props;
 
   const rsi        = technicalOutput?.rsi_value?.toFixed(1)  ?? 'N/A';
   const macd       = technicalOutput?.macd_score != null ? (technicalOutput.macd_score > 0 ? 'Bullish' : technicalOutput.macd_score < 0 ? 'Bearish' : 'Neutral') : 'N/A';
@@ -95,6 +97,9 @@ function buildPrompt(props: LLMReportEngineProps, headlines: NewsRow[]): string 
   const risk       = recommendation?.riskLevel ?? 'N/A';
   const sentScore  = sentimentOutput?.score?.toFixed(2) ?? 'N/A';
   const sentLabel  = sentimentOutput?.newsStatus ?? 'N/A';
+  
+  const specialistSignal = fusionOutput?.specialist?.signal ?? 'N/A';
+  const specialistProb = fusionOutput?.specialist?.probability ? (fusionOutput.specialist.probability * 100).toFixed(1) + '%' : 'N/A';
 
   const techStr = technicalOutput
     ? JSON.stringify(technicalOutput, null, 2)
@@ -108,6 +113,10 @@ function buildPrompt(props: LLMReportEngineProps, headlines: NewsRow[]): string 
     ? JSON.stringify(sentimentOutput, null, 2)
     : '(Sentiment agent data not yet available)';
 
+  const specialistStr = fusionOutput?.specialist
+    ? JSON.stringify(fusionOutput.specialist, null, 2)
+    : '(Specialist agent data not yet available)';
+
   const newsBlock = headlines.length
     ? headlines.map((h, i) => {
         const hl  = h['headline'] || h['title'] || h['news'] || Object.values(h)[0] || '';
@@ -118,7 +127,7 @@ function buildPrompt(props: LLMReportEngineProps, headlines: NewsRow[]): string 
       }).join('\n')
     : '(News feed unavailable — no CSV data loaded)';
 
-  return `You are an expert quantitative stock market analyst AI embedded in a professional multi-agent advisory system. Your job is to synthesize outputs from three specialized AI agents and produce a detailed, actionable advisory report.
+  return `You are an expert quantitative stock market analyst AI embedded in a professional multi-agent advisory system. Your job is to synthesize outputs from four specialized AI agents and produce a detailed, actionable advisory report.
 
 ANALYSIS TARGET
 Stock: ${displayName || ticker} (${ticker}) | Exchange: ${exchange ?? 'NSE'} | Report Generated: ${new Date().toUTCString()}
@@ -135,11 +144,15 @@ Key Metrics → Regime: ${regime} | Confidence: ${confidence}% | Risk: ${risk}
 ${sentStr}
 Key Metrics → Score: ${sentScore} | Polarity: ${sentLabel}
 
+━━━ SPECIALIST MODEL (XGBOOST) ━━━
+${specialistStr}
+Key Metrics → Signal: ${specialistSignal} | Probability Up: ${specialistProb}
+
 ━━━ LIVE NEWS FEED (from regime agent — top 10 by sentiment impact) ━━━
 ${newsBlock}
 
 ━━━ REPORT INSTRUCTIONS ━━━
-Write a complete advisory report with EXACTLY these 9 sections.
+Write a complete advisory report with EXACTLY these 10 sections.
 Use the section headings in ALL CAPS exactly as written below.
 Be specific — reference the actual numbers and data provided above.
 Do not be generic. Every insight must trace back to the data.
@@ -156,6 +169,9 @@ Interpret RSI ${rsi} precisely (overbought/oversold/neutral zone). Explain what 
 SENTIMENT ANALYSIS
 Explain the ${sentScore} sentiment score in context. What themes are driving the ${sentLabel} polarity? How strongly is news sentiment aligning or conflicting with the technical signals?
 
+SPECIALIST AI ANALYSIS
+Explain the Specialist Agent's ${specialistSignal} signal. Why did the XGBoost model output a ${specialistProb} probability given the current ${regime} regime? How does this historical context influence the final recommendation?
+
 KEY NEWS HIGHLIGHTS
 Pick the 3–5 most impactful headlines from the news feed above. For each: quote the headline, explain why it matters specifically for ${displayName || ticker}, and what directional pressure it creates.
 
@@ -165,7 +181,7 @@ Explain why risk is currently ${risk.toUpperCase()} for ${displayName || ticker}
 FINAL ADVISORY SIGNAL
 State clearly: STRONG BUY / BUY / HOLD / SELL / STRONG SELL
 Confidence: X%
-Reasoning: one paragraph tying regime + technical + sentiment together into the final signal. Be decisive.
+Reasoning: one paragraph tying regime + technical + sentiment + specialist together into the final signal. Be decisive.
 
 RECOMMENDED ACTION PLAN
 Bullet 1: What to do NOW based on current signals
@@ -239,7 +255,7 @@ export const LLMReportEngine = forwardRef<LLMReportEngineHandle, LLMReportEngine
     // ── Fetch news from backend ──────────────────────────────────
     const fetchNews = async (): Promise<NewsRow[]> => {
       try {
-        const res = await fetch('http://localhost:5000/api/news-headlines', { signal: AbortSignal.timeout(6000) });
+        const res = await fetch(`http://localhost:5000/api/news-headlines/${props.ticker}`, { signal: AbortSignal.timeout(6000) });
         const json = await res.json();
         if (json.headlines && json.headlines.length > 0) {
           setNewsMissing(false);
@@ -318,7 +334,12 @@ export const LLMReportEngine = forwardRef<LLMReportEngineHandle, LLMReportEngine
         setPanelOpen(true);
         setGenTime(Math.round((Date.now() - t0) / 100) / 10);
         if (data.usage) setTokenUsage({ total: data.usage.total_tokens, prompt: data.usage.prompt_tokens, completion: data.usage.completion_tokens });
-        onReportGenerated?.(content);
+        
+        // Extract the short reasoning paragraph to send back to the UI (CommandCenter)
+        // instead of bleeding the massive raw markdown into the summary box.
+        const reasoningMatch = content.match(/Reasoning:\s*(.+?)(?:\n\n|\n[A-Z])/i);
+        const shortSummary = reasoningMatch ? reasoningMatch[1].trim() : "Detailed AI Advisory Report generated. Click 'View Details' to expand.";
+        onReportGenerated?.(shortSummary);
 
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -369,10 +390,20 @@ export const LLMReportEngine = forwardRef<LLMReportEngineHandle, LLMReportEngine
       const formattedReport = report
         .split('\n')
         .map(line => {
-          const isH = /^[A-Z][A-Z\s\/]{3,}$/.test(line.trim()) && line.trim().length < 60;
-          if (isH) return `<div class="sh">${line}</div>`;
-          if (line.trim() === '') return '<div class="gap"></div>';
-          return `<p>${line}</p>`;
+          // Parse markdown **bold** to HTML
+          let htmlLine = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+          
+          // Identify headers (all caps)
+          const isH = /^[A-Z][A-Z\s\/]{3,}$/.test(htmlLine.replace(/<\/?[^>]+(>|$)/g, "").trim()) && htmlLine.trim().length < 60;
+          if (isH) return `<div class="sh">${htmlLine}</div>`;
+          if (htmlLine.trim() === '') return '<div class="gap"></div>';
+          
+          // Format bullet points
+          if (htmlLine.trim().startsWith('* ')) {
+            return `<li style="margin-left: 20px; font-size: 13px; color: #374151; margin-bottom: 6px;">${htmlLine.replace('* ', '')}</li>`;
+          }
+          
+          return `<p>${htmlLine}</p>`;
         }).join('');
 
       const newsRows = headlines.slice(0, 10).map((h, i) => {
@@ -381,8 +412,9 @@ export const LLMReportEngine = forwardRef<LLMReportEngineHandle, LLMReportEngine
         const dt2 = h['date']   || h['published_date'] || 'N/A';
         const sc  = h['sentiment_score'] || h['score'] || '';
         const scNum = parseFloat(sc);
-        const scColor = isNaN(scNum) ? C.muted : scNum >= 0 ? C.green : C.red;
-        return `<tr><td>${i + 1}</td><td>${hl}</td><td>${src}</td><td>${dt2}</td><td style="color:${scColor}">${sc}</td></tr>`;
+        const scColor = isNaN(scNum) ? '#6b7280' : scNum >= 0 ? '#166534' : '#991b1b';
+        const scBg = isNaN(scNum) ? 'transparent' : scNum >= 0 ? '#dcfce7' : '#fee2e2';
+        return `<tr><td>${i + 1}</td><td>${hl}</td><td>${src}</td><td>${dt2}</td><td><span style="color:${scColor}; background:${scBg}; padding:2px 6px; border-radius:4px; font-weight:600;">${sc}</span></td></tr>`;
       }).join('');
 
       const html = `<!DOCTYPE html>
@@ -390,47 +422,52 @@ export const LLMReportEngine = forwardRef<LLMReportEngineHandle, LLMReportEngine
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${t} Advisory Report — ${new Date().toLocaleDateString('en-IN')}</title>
-<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<title>${t} Institutional Research Report</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Merriweather:wght@300;400;700&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0e1a;color:#e2e8f0;font-family:'Space Mono',monospace;padding:40px 20px;line-height:1.7}
-.wrap{max-width:860px;margin:0 auto}
-h1{font-family:'Rajdhani',sans-serif;font-size:2.2rem;letter-spacing:4px;color:${C.gold};margin-bottom:4px}
-.sub{color:${C.muted};font-size:11px;letter-spacing:3px;margin-bottom:32px}
-.summary{display:flex;flex-wrap:wrap;gap:20px;background:#111827;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:24px;margin-bottom:28px;align-items:center}
-.pill{padding:6px 16px;border-radius:20px;font-family:'Rajdhani',sans-serif;font-weight:700;font-size:13px;letter-spacing:2px}
-.conf-wrap{flex:1;min-width:160px}.conf-label{font-size:10px;color:${C.muted};letter-spacing:1px;margin-bottom:6px}
-.conf-bar{height:8px;background:#1a2235;border-radius:4px;overflow:hidden}
-.conf-fill{height:100%;background:linear-gradient(90deg,rgba(245,197,24,.5),${C.gold});border-radius:4px}
-.conf-pct{text-align:right;font-size:11px;color:${C.gold};margin-top:4px}
-.report-body{background:#111827;border-left:4px solid ${C.gold};border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:28px;margin-bottom:28px}
-.sh{color:${C.gold};font-weight:700;font-size:11px;letter-spacing:2px;display:block;margin-top:24px;margin-bottom:6px;text-transform:uppercase}
-p{color:#e2e8f0;font-size:12.5px;margin-bottom:4px}
-.gap{height:10px}
-table{width:100%;border-collapse:collapse;background:#111827;border-radius:12px;overflow:hidden;margin-bottom:28px}
-th{background:#1a2235;color:${C.gold};font-family:'Rajdhani',sans-serif;padding:10px 14px;text-align:left;font-size:11px;letter-spacing:2px}
-td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.05);font-size:11.5px;vertical-align:top}
-tr:last-child td{border:none}
-.sec-title{font-family:'Rajdhani',sans-serif;color:${C.gold};letter-spacing:3px;font-size:13px;margin-bottom:12px;text-transform:uppercase}
-footer{text-align:center;border-top:1px solid rgba(255,255,255,.08);padding-top:20px;margin-top:20px;color:${C.muted};font-size:10px;letter-spacing:2px;line-height:2}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #ffffff; color: #111827; font-family: 'Merriweather', serif; padding: 40px; line-height: 1.6; }
+.wrap { max-width: 800px; margin: 0 auto; }
+.header { border-bottom: 2px solid #111827; padding-bottom: 24px; margin-bottom: 32px; }
+h1 { font-family: 'Inter', sans-serif; font-size: 2.2rem; font-weight: 700; color: #000000; letter-spacing: -0.5px; margin-bottom: 6px; }
+.sub { color: #6b7280; font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+.summary { display: flex; flex-wrap: wrap; gap: 16px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 32px; align-items: center; font-family: 'Inter', sans-serif; }
+.pill { padding: 4px 12px; border-radius: 4px; font-weight: 700; font-size: 12px; letter-spacing: 0.5px; border: 1px solid #d1d5db; background: #ffffff; color: #111827; }
+.conf-wrap { flex: 1; min-width: 160px; }
+.conf-label { font-size: 10px; color: #6b7280; font-weight: 700; letter-spacing: 1px; margin-bottom: 6px; text-transform: uppercase; }
+.conf-bar { height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; }
+.conf-fill { height: 100%; background: #2563eb; border-radius: 3px; }
+.conf-pct { text-align: right; font-size: 11px; font-weight: 700; color: #374151; margin-top: 4px; }
+.report-body { background: #ffffff; padding: 10px 0; margin-bottom: 40px; }
+.sh { font-family: 'Inter', sans-serif; color: #111827; font-weight: 700; font-size: 14px; letter-spacing: 0.5px; display: block; margin-top: 28px; margin-bottom: 12px; text-transform: uppercase; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+p { font-size: 12.5px; margin-bottom: 12px; color: #374151; text-align: justify; }
+strong { color: #111827; font-weight: 700; }
+.gap { height: 12px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-family: 'Inter', sans-serif; font-size: 11px; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
+th { background: #f3f4f6; color: #374151; font-weight: 700; padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 12px; border-bottom: 1px solid #e5e7eb; color: #4b5563; vertical-align: top; }
+tr:nth-child(even) { background: #fafafa; }
+.sec-title { font-family: 'Inter', sans-serif; color: #111827; font-weight: 700; font-size: 14px; margin-bottom: 16px; text-transform: uppercase; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; letter-spacing: 0.5px; }
+footer { text-align: center; border-top: 1px solid #e5e7eb; padding-top: 24px; margin-top: 40px; color: #9ca3af; font-family: 'Inter', sans-serif; font-size: 10px; letter-spacing: 1px; line-height: 1.8; }
 </style>
 </head>
 <body>
 <div class="wrap">
-<h1>⚡ ${t} ADVISORY REPORT</h1>
-<p class="sub">${exchange ?? 'NSE'} · ${new Date().toUTCString()} · REGIME-AWARE MULTI-AGENT SYSTEM</p>
+<div class="header">
+  <h1>INSTITUTIONAL RESEARCH REPORT: ${t}</h1>
+  <p class="sub">${exchange ?? 'NSE'} · ${new Date().toUTCString()} · AI QUANTITATIVE ADVISORY</p>
+</div>
 
 <div class="summary">
-  <div><div class="conf-label">REGIME</div>
-  <span class="pill" style="background:${rc.bg};color:${rc.text}">${regime.toUpperCase()}</span></div>
-  <div class="conf-wrap"><div class="conf-label">MISSION CONFIDENCE</div>
+  <div><div class="conf-label">MARKET REGIME</div>
+  <span class="pill" style="border-color:${rc.text}; color:${rc.text}">${regime.toUpperCase()}</span></div>
+  <div class="conf-wrap"><div class="conf-label">SYSTEM CONFIDENCE</div>
   <div class="conf-bar"><div class="conf-fill" style="width:${conf}%"></div></div>
   <div class="conf-pct">${conf}%</div></div>
-  <div><div class="conf-label">RISK LEVEL</div>
-  <span class="pill" style="background:rgba(239,68,68,.15);color:${C.red}">${risk?.toUpperCase()}</span></div>
+  <div><div class="conf-label">RISK EXPOSURE</div>
+  <span class="pill" style="border-color:${C.red}; color:${C.red}">${risk?.toUpperCase()}</span></div>
   <div><div class="conf-label">FINAL SIGNAL</div>
-  <span class="pill" style="background:rgba(245,197,24,.1);color:${sigColor}">${sigText || 'SEE REPORT'}</span></div>
+  <span class="pill" style="background:${sigColor}; color:#000; border:none;">${sigText || 'SEE REPORT'}</span></div>
 </div>
 
 <div class="report-body">${formattedReport}</div>
@@ -448,13 +485,24 @@ ${headlines.length > 0 ? `<p class="sec-title">TOP NEWS HEADLINES</p>
 </body>
 </html>`;
 
-      const blob = new Blob([html], { type: 'text/html' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = fn;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      showToast(`REPORT EXPORTED → ${fn}`);
+      const opt = {
+        margin:       0.3,
+        filename:     fn.replace('.html', '.pdf'),
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2, useCORS: true },
+        jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+      };
+
+      showToast(`GENERATING PDF...`);
+      // Pass the raw HTML string directly so html2pdf can render it in a hidden iframe.
+      // Do NOT set innerHTML on a div, as browsers will strip the <html> and <style> tags.
+      html2pdf().set(opt).from(html).save().then(() => {
+        showToast(`REPORT EXPORTED → ${opt.filename}`);
+      }).catch((err: any) => {
+        console.error('PDF Export failed:', err);
+        showToast(`PDF EXPORT FAILED`);
+      });
+
     }, [hasReport, report, headlines, ticker, exchange, regimeOutput, recommendation]);
 
     // Expose to parent via ref

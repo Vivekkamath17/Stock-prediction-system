@@ -77,6 +77,24 @@ class TechnicalAnalysisAgent:
         self.data["MA50"] = self.data["Close"].rolling(50).mean()
         self.data["MA200"] = self.data["Close"].rolling(200).mean()
 
+        # d) ADX (Trend Strength)
+        adx_df = self.data.ta.adx(length=14)
+        if adx_df is not None and not adx_df.empty:
+            self.data = pd.concat([self.data, adx_df], axis=1)
+        else:
+            self.data["ADX_14"] = np.nan
+            self.data["DMP_14"] = np.nan
+            self.data["DMN_14"] = np.nan
+
+        # e) OBV (Volume Confirmation)
+        obv = self.data.ta.obv()
+        if obv is not None and not obv.empty:
+            self.data["OBV"] = obv
+            self.data["OBV_MA"] = self.data["OBV"].rolling(20).mean()
+        else:
+            self.data["OBV"] = np.nan
+            self.data["OBV_MA"] = np.nan
+
         # Drop NaN rows after computing all indicators
         # Handle edge cases like insufficient data for 200-day MA
         data_clean = self.data.dropna()
@@ -84,7 +102,7 @@ class TechnicalAnalysisAgent:
             self.data = data_clean
         else:
             # Fallback if insufficient data for MA200
-            subset = ["RSI_14", "MACD_12_26_9", "MACDh_12_26_9", "MACDs_12_26_9", "MA50"]
+            subset = ["RSI_14", "MACD_12_26_9", "MACDh_12_26_9", "MACDs_12_26_9", "MA50", "ADX_14"]
             subset = [col for col in subset if col in self.data.columns]
             self.data.dropna(subset=subset, inplace=True)
 
@@ -106,73 +124,108 @@ class TechnicalAnalysisAgent:
 
         latest = self.data.iloc[-1]
 
-        # a) RSI Score
-        rsi_val = float(latest["RSI_14"]) if not pd.isna(latest.get("RSI_14", float("nan"))) else 0.0
-        rsi = rsi_val
+        # a) Extract Latest Values
+        adx = float(latest.get("ADX_14", 20)) if not pd.isna(latest.get("ADX_14", float("nan"))) else 20.0
+        rsi = float(latest.get("RSI_14", 50)) if not pd.isna(latest.get("RSI_14", float("nan"))) else 50.0
         
-        if rsi > 70:
-            rsi_score = -1
-        elif 50 <= rsi <= 70:
-            rsi_score = 1
-        elif 30 <= rsi < 50:
-            rsi_score = 0
-        else:
-            rsi_score = 1
+        macd_line = float(latest.get("MACD_12_26_9", 0)) if not pd.isna(latest.get("MACD_12_26_9", float("nan"))) else 0.0
+        signal_line = float(latest.get("MACDs_12_26_9", 0)) if not pd.isna(latest.get("MACDs_12_26_9", float("nan"))) else 0.0
+        histogram = float(latest.get("MACDh_12_26_9", 0)) if not pd.isna(latest.get("MACDh_12_26_9", float("nan"))) else 0.0
 
-        # b) MACD Score
-        macd_line = float(latest["MACD_12_26_9"]) if not pd.isna(latest.get("MACD_12_26_9", float("nan"))) else 0.0
-        signal_line = float(latest["MACDs_12_26_9"]) if not pd.isna(latest.get("MACDs_12_26_9", float("nan"))) else 0.0
-        histogram = float(latest["MACDh_12_26_9"]) if not pd.isna(latest.get("MACDh_12_26_9", float("nan"))) else 0.0
-
-        if macd_line > signal_line and histogram > 0:
-            macd_score = 1
-        elif macd_line < signal_line and histogram < 0:
-            macd_score = -1
-        else:
-            macd_score = 0
-
-        # c) Moving Average Score
         ma50 = latest.get("MA50", 0)
         ma200 = latest.get("MA200", 0)
         close = latest.get("Close", 0)
 
-        if pd.isna(ma50) or pd.isna(ma200) or pd.isna(close):
-            ma_score = 0
+        obv = latest.get("OBV", 0)
+        obv_ma = latest.get("OBV_MA", 0)
+
+        # Determine Market Context
+        is_trending = adx >= 25
+        is_sideways = adx < 20
+
+        # b) RSI Score (Context-Aware)
+        # In sideways markets, RSI acts as a mean-reversion oscillator.
+        # In trending markets, RSI stays overbought/oversold longer (strength).
+        rsi_score = 0
+        if is_sideways:
+            if rsi > 70: rsi_score = -1.0   # Overbought -> Expect Drop
+            elif rsi < 30: rsi_score = 1.0  # Oversold -> Expect Bounce
+            else: rsi_score = 0.0
         else:
+            if rsi > 70: rsi_score = 0.5    # Strong Upward Trend
+            elif rsi < 30: rsi_score = -1.0 # Strong Downward Trend
+            elif rsi > 50: rsi_score = 0.5
+            else: rsi_score = -0.5
+
+        # c) MACD Score (Trend-following)
+        # MACD whipsaws in sideways markets, so we reduce its signal strength.
+        macd_score = 0
+        if macd_line > signal_line and histogram > 0:
+            macd_score = 1.0 if is_trending else 0.5
+        elif macd_line < signal_line and histogram < 0:
+            macd_score = -1.0 if is_trending else -0.5
+
+        # d) Moving Average Score
+        ma_score = 0
+        if not (pd.isna(ma50) or pd.isna(ma200) or pd.isna(close)):
             if ma50 > ma200 and close > ma50:
-                ma_score = 1
+                ma_score = 1.0
             elif ma50 < ma200 and close < ma50:
-                ma_score = -1
+                ma_score = -1.0
+            elif close > ma50:
+                ma_score = 0.5
+            elif close < ma50:
+                ma_score = -0.5
+
+        # e) Volume Confirmation (OBV)
+        # If OBV is above its 20-day moving average, volume supports upward movement.
+        vol_score = 0
+        if not (pd.isna(obv) or pd.isna(obv_ma)):
+            if obv > obv_ma:
+                vol_score = 1.0
             else:
-                ma_score = 0
+                vol_score = -1.0
 
-        # d) Final Score
-        final_score = (rsi_score + macd_score + ma_score) / 3
+        # f) Final Score Calculation (Weighted based on context)
+        if is_trending:
+            # Trend indicators (MACD, MA) matter most
+            final_score = (rsi_score * 0.15) + (macd_score * 0.35) + (ma_score * 0.35) + (vol_score * 0.15)
+        elif is_sideways:
+            # Oscillators (RSI) matter most
+            final_score = (rsi_score * 0.40) + (macd_score * 0.10) + (ma_score * 0.30) + (vol_score * 0.20)
+        else:
+            # Transitional market (20 <= ADX < 25)
+            final_score = (rsi_score * 0.25) + (macd_score * 0.25) + (ma_score * 0.30) + (vol_score * 0.20)
 
-        # e) Trend Signal Mapping
+        final_score = max(-1.0, min(1.0, final_score))
+
+        # g) Trend Signal Mapping
         if final_score >= 0.5:
             trend_signal = "Strong Bullish"
         elif 0.1 <= final_score < 0.5:
             trend_signal = "Mild Bullish"
         elif -0.1 < final_score < 0.1:
-            trend_signal = "Neutral"
+            trend_signal = "Neutral / Choppy"
         elif -0.5 < final_score <= -0.1:
             trend_signal = "Mild Bearish"
         else:
             trend_signal = "Strong Bearish"
 
-        # f) Confidence
+        # h) Confidence
         confidence = round(abs(final_score) * 100, 2)
 
         self.results = {
             "rsi_value": float(rsi),
-            "rsi_score": int(rsi_score),
-            "macd_score": int(macd_score),
-            "ma_score": int(ma_score),
+            "rsi_score": int(np.sign(rsi_score)),
+            "macd_score": int(np.sign(macd_score)),
+            "ma_score": int(np.sign(ma_score)),
             "final_score": float(final_score),
             "trend_signal": trend_signal,
-            "confidence": float(confidence)
+            "confidence": float(confidence),
+            "adx_value": float(adx),
+            "is_trending": bool(is_trending)
         }
+
         
         return self.results
 

@@ -50,8 +50,8 @@ export function RegimeDisplay({ regimeData, technicalData, isLoading }: RegimeDi
   const rawRegime = regimeData?.regime?.replace('_', '').toUpperCase();
   const hasError = !isLoading && (!regimeData || !regimeData.regime);
   
-  // Calculate confidence from technical agent
-  const rawConfidence = technicalData?.confidence ?? 0;
+  // Calculate confidence from regime agent
+  const rawConfidence = regimeData?.confidence ?? 0;
   const confidence = Math.round(rawConfidence);
 
   // Setup UI config based on state

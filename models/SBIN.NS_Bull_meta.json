@@ -1,8 +1,8 @@
 {
-  "ticker": "INFY.NS",
+  "ticker": "SBIN.NS",
   "regime": "Bull",
   "trained_on": "2026-04-24",
   "n_train": 482,
-  "accuracy": 57.9,
+  "accuracy": 55.4,
   "period": "10y"
 }
