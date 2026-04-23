@@ -166,10 +166,10 @@ export function AuthModal({ isOpen, onClose, onAuthChange }: AuthModalProps) {
               </motion.div>
               <div>
                 <p style={{ fontSize: '0.7rem', color: '#FF6B35', letterSpacing: '0.15em', fontWeight: 600, textTransform: 'uppercase' }}>
-                  MARKET MISSION CONTROL
+                  MARKET STOCK CONTROL
                 </p>
                 <p style={{ fontSize: '0.72rem', color: '#6b7280', letterSpacing: '0.05em' }}>
-                  {view === 'login' ? 'Commander Authentication' : view === 'email-confirmation' ? 'Verification Required' : 'Mission Enrollment'}
+                  {view === 'login' ? 'Commander Authentication' : view === 'email-confirmation' ? 'Verification Required' : 'Stock Enrollment'}
                 </p>
               </div>
             </div>

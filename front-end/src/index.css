@@ -1583,8 +1583,44 @@ html {
   initial-value: 0 0 #0000;
 }
 
+
 @keyframes pulse {
   50% {
     opacity: .5;
   }
 }
+
+/* ═══════════════════════════════════
+ /* ── STOCK CONTROL SHARED ANIMATIONS ───────────────────────────── */
+═══════════════════════════════════ */
+@keyframes twinkle {
+  from { opacity: 0.1; }
+  to   { opacity: 0.85; }
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-6px); }
+}
+
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 107, 53, 0.4); }
+  70%  { box-shadow: 0 0 0 10px rgba(255, 107, 53, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 107, 53, 0); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-bob        { animation: bob 3s ease-in-out infinite; }
+.animate-pulse-ring { animation: pulse-ring 2s infinite; }
+.animate-fade-up    { animation: fade-up 0.55s ease forwards; }
+.animate-scale-in   { animation: scale-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+

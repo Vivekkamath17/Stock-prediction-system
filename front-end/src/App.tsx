@@ -213,7 +213,7 @@ export default function App() {
             display: 'inline-block',
             marginBottom: '0.75rem',
           }}>🚀</div>
-          <p style={{ color: '#6b7280', fontSize: '0.85rem', letterSpacing: '0.1em' }}>INITIALIZING MISSION CONTROL...</p>
+          <p style={{ color: '#6b7280', fontSize: '0.85rem', letterSpacing: '0.1em' }}>INITIALIZING STOCK CONTROL...</p>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
@@ -271,6 +271,12 @@ export default function App() {
                       regimeOutput={stockData.regimeAgent}
                       sentimentOutput={stockData.sentimentAnalysis}
                       recommendation={stockData.recommendation}
+                      onReportGenerated={(reasoning) => {
+                        setStockData(prev => prev ? {
+                          ...prev,
+                          recommendation: { ...prev.recommendation, summary: reasoning }
+                        } : prev);
+                      }}
                     />
                     
                     <FlightLogs 

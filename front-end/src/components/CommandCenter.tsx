@@ -46,68 +46,10 @@ export function CommandCenter({ recommendation, onViewDetails, onExportReport }:
     >
       <div className="flex items-center gap-2 mb-4">
         <Target className="size-5 text-[#FF6B35]" />
-        <h2 className="text-xl font-semibold">FINAL ADVISORY - MISSION RECOMMENDATION</h2>
+        <h2 className="text-xl font-semibold">FINAL ADVISORY - STOCK RECOMMENDATION</h2>
       </div>
 
       <div className="bg-[#1C1C1E]/50 rounded-xl p-8 border border-white/5">
-        {/* Trend Display */}
-        <div className="text-center mb-6">
-          <p className="text-sm text-gray-400 mb-2">TREND:</p>
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: 'spring', stiffness: 200 }}
-            className="inline-flex items-center gap-3 px-6 py-3 rounded-xl"
-            style={{ backgroundColor: `${config.color}20` }}
-          >
-            <TrendIcon className="size-8" style={{ color: config.color }} />
-            <span className="text-3xl font-bold" style={{ color: config.color }}>
-              {config.label}
-            </span>
-          </motion.div>
-        </div>
-
-        {/* Confidence Meter */}
-        <div className="mb-6">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm text-gray-400">Mission Confidence</span>
-            <span className="font-semibold" style={{ color: config.color }}>
-              {Math.round(recommendation.confidenceScore)}%
-            </span>
-          </div>
-          <div className="relative h-6 bg-[#1C1C1E] rounded-full overflow-hidden border border-white/10">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${recommendation.confidenceScore}%` }}
-              transition={{ duration: 1.5, ease: 'easeOut' }}
-              className="h-full flex items-center justify-end pr-3"
-              style={{
-                background: `linear-gradient(90deg, ${config.color}50, ${config.color})`,
-                boxShadow: `0 0 15px ${config.color}`,
-              }}
-            >
-              <motion.div
-                animate={{ x: [0, 5, 0] }}
-                transition={{ duration: 1.5, repeat: Infinity }}
-              >
-                <div
-                  className="size-3 rounded-full"
-                  style={{ backgroundColor: config.color, boxShadow: `0 0 10px ${config.color}` }}
-                />
-              </motion.div>
-            </motion.div>
-          </div>
-        </div>
-
-        {/* Risk Level */}
-        <div className="mb-6 p-4 rounded-lg bg-[#0A1128]/50 border border-white/10">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-400">Risk Level:</span>
-            <span className="font-semibold text-lg" style={{ color: risk.color }}>
-              {risk.label}
-            </span>
-          </div>
-        </div>
 
         {/* Summary */}
         <div className="mb-6 p-4 rounded-lg bg-white/5 border border-white/10">

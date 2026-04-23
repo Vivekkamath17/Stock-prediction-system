@@ -69,12 +69,20 @@ export function Header({ currentRegime, user, onAuthClick, onLogout }: HeaderPro
               <Rocket className="size-8 text-[#FF6B35]" />
             </motion.div>
             <div>
-              <h1 className="text-2xl font-bold tracking-wider text-white">MARKET MISSION CONTROL</h1>
+              <h1 className="text-2xl font-bold tracking-wider text-white">MARKET STOCK CONTROL</h1>
               <p className="text-xs text-gray-400 tracking-wide">Regime-Aware Multi-Agent Advisory System</p>
             </div>
           </Link>
           
           <nav style={{ display: 'flex', gap: '32px', alignItems: 'center' }} className="hidden md:flex">
+            <NavLink
+              to="/"
+              style={({ isActive }) => ({
+                ...navLinkStyle,
+                color: isActive ? '#f5c518' : '#64748b',
+                borderBottomColor: isActive ? '#f5c518' : 'transparent',
+              })}
+            >DASHBOARD</NavLink>
             <NavLink
               to="/how-it-works"
               style={({ isActive }) => ({

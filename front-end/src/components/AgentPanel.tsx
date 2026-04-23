@@ -72,7 +72,7 @@ export function AgentPanel({
       transition={{ delay: 0.2 }}
       className="space-y-4"
     >
-      <h2 className="text-xl font-semibold">AGENT ANALYSIS - MISSION CREW REPORTS</h2>
+      <h2 className="text-xl font-semibold">AGENT ANALYSIS - STOCK CREW REPORTS</h2>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 

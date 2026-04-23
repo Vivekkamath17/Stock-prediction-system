@@ -76,7 +76,7 @@ export function FlightLogs({ ticker, displayName, regime }: FlightLogsProps) {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <ScrollText className="size-5 text-[#1E88E5]" />
-          <h2 className="text-xl font-semibold">MISSION HISTORY - {ticker}</h2>
+          <h2 className="text-xl font-semibold">STOCK HISTORY - {ticker}</h2>
         </div>
         
         <div className="flex gap-2">
