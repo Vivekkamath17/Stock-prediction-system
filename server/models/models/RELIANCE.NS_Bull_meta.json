@@ -1,0 +1,8 @@
+{
+  "ticker": "RELIANCE.NS",
+  "regime": "Bull",
+  "trained_on": "2026-04-23",
+  "n_train": 505,
+  "accuracy": 47.2,
+  "period": "10y"
+}

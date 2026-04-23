@@ -13,4 +13,5 @@ yfinance
 pandas_ta
 hmmlearn
 matplotlib
-numpy
+numpy
+xgboost

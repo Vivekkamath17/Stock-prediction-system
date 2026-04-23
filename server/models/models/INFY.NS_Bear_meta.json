@@ -1,0 +1,8 @@
+{
+  "ticker": "INFY.NS",
+  "regime": "Bear",
+  "trained_on": "2026-04-23",
+  "n_train": 150,
+  "accuracy": 38.5,
+  "period": "10y"
+}

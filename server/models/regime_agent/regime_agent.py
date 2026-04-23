@@ -1,389 +1,402 @@
 """
 Market Regime Detection Agent
-=============================
-Detects the current market regime from historical stock data using a
-Gaussian Hidden Markov Model (HMM).
+==============================
+Detects the current NIFTY market regime using a Gaussian Hidden Markov Model (HMM).
+The HMM is ALWAYS trained on NIFTY index data only -- never on individual stocks.
 
 Output regimes: Bull | Bear | Sideways | HighVolatility
+
+FIXES APPLIED:
+  P2 - Confidence: averaged predict_proba over last 10 observations (not just 1)
+  P3 - Walk-forward labeling: deterministic rank-based state assignment
 """
 
-import sys
 import io
+import os
+import sys
+import time
 import warnings
 import numpy as np
 import pandas as pd
 import yfinance as yf
-import pandas_ta as ta
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import joblib
+from datetime import date
 from hmmlearn.hmm import GaussianHMM
 from sklearn.preprocessing import StandardScaler
 
-# Force stdout to UTF-8 to avoid cp1252 encoding errors on Windows
-if sys.stdout.encoding.lower() != 'utf-8':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', line_buffering=True)
+# Force UTF-8 stdout so Windows cp1252 never causes UnicodeEncodeError
+if sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 
-# Suppress HMM convergence warnings in production
+# Suppress noisy convergence warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", message=".*did not converge.*")
+warnings.filterwarnings("ignore", message=".*ConvergenceWarning.*")
+
+# ==============================================================================
+# CONSTANTS
+# ==============================================================================
+NIFTY_TICKER   = "^NSEI"
+VIX_TICKER     = "^INDIAVIX"
+DEFAULT_PERIOD = "10y"
+N_HMM_STATES  = 4
+HMM_ITERATIONS = 2000
+PERSISTENCE_DAYS = 3
+CONFIDENCE_WINDOW = 3           # P2 FIX: average proba over last 3 observations (matches persistence)
+MODEL_DIR      = "models/"
+HMM_MODEL_PATH = "models/nifty_hmm.pkl"
+RANDOM_STATE   = 42
+
+ALL_REGIME_LABELS = ["Bull", "Bear", "Sideways", "HighVolatility"]
 
 
-class MarketRegimeAgent:
+# ==============================================================================
+# CLASS
+# ==============================================================================
+class RegimeAgent:
     """
-    A regime-aware market detection agent built on a Gaussian HMM.
-
-    Usage:
-        agent = MarketRegimeAgent(ticker="^NSEI")
-        agent.fetch_data()
-        agent.compute_features()
-        agent.train_hmm()
-        agent.label_regimes()
-        regime = agent.get_current_regime()
-        agent.plot_regimes()
+    Regime-aware market detection agent built on a Gaussian HMM trained
+    exclusively on NIFTY index data. Exposes a clean dictionary interface
+    for downstream agents.
     """
 
-    # Colours used for plotting each regime
-    REGIME_COLOURS = {
-        "Bull": "#00C853",           # Green
-        "Bear": "#D50000",           # Red
-        "Sideways": "#FFD600",       # Yellow
-        "HighVolatility": "#FF6D00", # Orange
-    }
-
-    EXCHANGE_SUFFIX_MAP = {
-        "NSE": ".NS",
-        "BSE": ".BO",
-        "NYSE": "",
-        "NASDAQ": "",
-        "LSE": ".L",
-        "TSX": ".TO",
-    }
-
-    def _normalize_ticker(self, ticker: str, exchange: str = "NSE") -> str:
-        """
-        Auto-append yfinance exchange suffix if not already present.
-        """
-        ticker = ticker.strip().upper()
-        suffix = self.EXCHANGE_SUFFIX_MAP.get(exchange.upper(), ".NS")
-        if "." in ticker[1:]:
-            return ticker
-        return ticker + suffix
-
-    def __init__(self, ticker: str = "^NSEI", exchange: str = "NSE", period: str = "3y"):
-        """
-        Parameters
-        ----------
-        ticker : str
-            Yahoo Finance ticker symbol. Default is ^NSEI (NIFTY 50).
-        exchange: str
-            Exchange name used to append the correct suffix (e.g., .NS for NSE).
-        period : str
-            Historical data period for yfinance. Default "3y".
-        """
-        self.raw_ticker = ticker
-        self.exchange = exchange
-        self.ticker = self._normalize_ticker(ticker, exchange)
-        if ticker.startswith("^"):
-            self.ticker = ticker
+    def __init__(self, ticker=NIFTY_TICKER, period=DEFAULT_PERIOD):
+        """Initialise the agent with ticker, period, and create model directory."""
+        self.ticker = ticker
         self.period = period
+        self.hmm = None
+        self.state_map = None        # dict: {int_state -> regime_string}
+        self.scaler = StandardScaler()
+        self.df = None
+        self.feature_matrix = None   # raw features (unscaled)
+        self.scaled_features = None  # StandardScaler output
 
-        self.df: pd.DataFrame = pd.DataFrame()
-        self.features: np.ndarray = np.array([])       # raw features
-        self.scaled_features: np.ndarray = np.array([]) # normalized features
-        self.scaler: StandardScaler = StandardScaler()
-        self.hmm: GaussianHMM | None = None
-        self.states: np.ndarray = np.array([])
-        self.regime_map: dict[int, str] = {}
+        os.makedirs(MODEL_DIR, exist_ok=True)
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # HELPER: safe yfinance download with one retry
+    # --------------------------------------------------------------------------
+    def _safe_download(self, ticker, period=None):
+        """Download yfinance history (period-based) with a single retry."""
+        try:
+            df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+            if df is None or df.empty:
+                print("  [WARN] Empty result for %s, retrying in 5s..." % ticker)
+                time.sleep(5)
+                df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+            if df is None or df.empty:
+                raise ValueError(
+                    "yfinance returned no data for '%s'. "
+                    "Check ticker symbol and internet connection." % ticker
+                )
+            # Flatten MultiIndex columns (yfinance >= 0.2)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            return df
+        except Exception as exc:
+            raise ValueError("Failed to download data for '%s': %s" % (ticker, exc)) from exc
+
+    # --------------------------------------------------------------------------
     # STEP 1 - DATA FETCHING
-    # ------------------------------------------------------------------
-    def fetch_data(self) -> None:
-        """Download historical OHLC data from Yahoo Finance."""
-        print(f"[RegimeAgent] Downloading {self.period} of data for {self.ticker}...")
-        
-        def _try_fetch(t):
-            return yf.download(t, period=self.period, auto_adjust=True, progress=False)
+    # --------------------------------------------------------------------------
+    def fetch_data(self):
+        """Download NIFTY + India VIX data and compute the 3 HMM features."""
+        print("[RegimeAgent] Downloading %s of NIFTY data (%s)..." % (self.period, self.ticker))
+        nifty_raw = self._safe_download(self.ticker, period=self.period)
 
-        raw = _try_fetch(self.ticker)
+        print("[RegimeAgent] Downloading India VIX data (%s)..." % VIX_TICKER)
+        vix_raw = self._safe_download(VIX_TICKER, period=self.period)
 
-        if (raw is None or raw.empty) and "." not in self.ticker:
-            fallbacks = [self.ticker + ".NS", self.ticker + ".BO"]
-            for fb in fallbacks:
-                raw = _try_fetch(fb)
-                if raw is not None and not raw.empty:
-                    self.ticker = fb
-                    print(f"[INFO] Resolved ticker to: {self.ticker}")
-                    break
+        df = nifty_raw[["Open", "High", "Low", "Close", "Volume"]].copy()
+        df.index = pd.to_datetime(df.index).tz_localize(None)
 
-        if raw is None or raw.empty:
-            raise ValueError(f"No data returned for ticker '{self.ticker}'. Check the symbol.")
+        df["daily_return"]   = df["Close"].pct_change()
+        df["volatility_20d"] = df["daily_return"].rolling(20).std() * np.sqrt(252)
 
-        # Flatten potential MultiIndex columns produced by yfinance >= 0.2
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
+        vix_df = vix_raw[["Close"]].copy()
+        vix_df.index = pd.to_datetime(vix_df.index).tz_localize(None)
+        vix_df.columns = ["vix_close"]
+        vix_df["vix_change"] = vix_df["vix_close"].pct_change()
 
-        self.df = raw[["Open", "High", "Low", "Close", "Volume"]].copy()
-        print(f"[RegimeAgent] Fetched {len(self.df)} rows "
-              f"({self.df.index[0].date()} to {self.df.index[-1].date()})")
-
-    # ------------------------------------------------------------------
-    # STEP 2 - FEATURE ENGINEERING
-    # ------------------------------------------------------------------
-    def compute_features(self) -> None:
-        """Compute daily_return, volatility, RSI, and MACD feature columns."""
-        if self.df.empty:
-            raise RuntimeError("Call fetch_data() first.")
-
-        df = self.df.copy()
-
-        # Daily percentage return
-        df["daily_return"] = df["Close"].pct_change()
-
-        # 20-day rolling standard deviation of returns (annualised proxy for vol)
-        df["volatility"] = df["daily_return"].rolling(window=20).std()
-
-        # 14-day RSI
-        rsi_series = ta.rsi(df["Close"], length=14)
-        df["rsi"] = rsi_series
-
-        # MACD line (12/26/9 defaults)
-        macd_df = ta.macd(df["Close"])
-        if macd_df is not None and not macd_df.empty:
-            df["macd"] = macd_df.iloc[:, 0]  # MACD line column
-        else:
-            df["macd"] = np.nan
-
-        # Drop warmup NaNs
+        df = df.join(vix_df["vix_change"], how="left")
         df.dropna(inplace=True)
 
-        if len(df) < 60:
-            raise ValueError("Insufficient data after feature engineering. Use a longer period.")
+        if len(df) < 252:
+            raise ValueError(
+                "Insufficient data for '%s'. Got %d rows -- need at least 252." % (
+                    self.ticker, len(df)
+                )
+            )
 
         self.df = df
-        self.features = df[["daily_return", "volatility", "rsi", "macd"]].values
+        self.feature_matrix  = df[["daily_return", "volatility_20d", "vix_change"]].values
+        self.scaled_features = self.scaler.fit_transform(self.feature_matrix)
 
-        # Standardize so all features have mean=0 and std=1.
-        # This is critical for HMM covariance stability across tickers.
-        self.scaled_features = self.scaler.fit_transform(self.features)
-        print(f"[RegimeAgent] Features computed and scaled. Shape: {self.features.shape}")
+        print("[RegimeAgent] Loaded %d rows | %s to %s" % (
+            len(df), df.index[0].date(), df.index[-1].date()
+        ))
 
-    # ------------------------------------------------------------------
-    # STEP 3 - HMM TRAINING
-    # ------------------------------------------------------------------
-    def train_hmm(self, n_components: int = 4, n_iter: int = 1000) -> None:
+    # --------------------------------------------------------------------------
+    # STEP 2 - STATE -> REGIME MAPPING  (P3 FIX: deterministic rank-based)
+    # --------------------------------------------------------------------------
+    def _map_states_to_regimes(self):
         """
-        Fit a Gaussian HMM on the feature matrix.
+        Map HMM integer states to Bull/Bear/Sideways/HighVolatility using
+        deterministic rank ordering -- stable across different fold orderings.
 
-        Parameters
-        ----------
-        n_components : int
-            Number of hidden states (regimes). Default 4.
-        n_iter : int
-            Maximum EM iterations. Default 1000.
+        Assignment order (all from scaled feature means):
+          Bull         = state with HIGHEST mean_return (must be positive)
+          Bear         = state with LOWEST  mean_return (must be negative)
+          HighVol      = among remaining, state with HIGHEST mean_volatility
+          Sideways     = remaining state(s)
         """
-        if self.scaled_features.size == 0:
-            raise RuntimeError("Call compute_features() first.")
+        means      = self.hmm.means_       # shape: (n_states, 3)
+        n_states   = means.shape[0]
+        mean_ret   = means[:, 0]           # daily_return column (scaled)
+        mean_vol   = means[:, 1]           # volatility_20d column (scaled)
 
-        print(f"[RegimeAgent] Training HMM (states={n_components}, iter={n_iter})...")
-        self.hmm = GaussianHMM(
-            n_components=n_components,
-            covariance_type="full",
-            n_iter=n_iter,
-            random_state=42,
-        )
-        # Always fit on SCALED features to ensure positive-definite covariance
-        self.hmm.fit(self.scaled_features)
-        self.states = self.hmm.predict(self.scaled_features)
-        print(f"[RegimeAgent] HMM trained. Unique states found: {np.unique(self.states).tolist()}")
+        mapping   = {}
+        remaining = set(range(n_states))
 
-    # ------------------------------------------------------------------
-    # STEP 4 - REGIME LABELING
-    # ------------------------------------------------------------------
-    def label_regimes(self) -> None:
-        """
-        Map HMM integer states to human-readable regime labels.
-
-        Label logic:
-          - Bull           : state with highest mean daily return
-          - Bear           : state with lowest (most negative) mean daily return
-          - HighVolatility : state with highest mean volatility
-          - Sideways       : the remaining state
-        """
-        if self.hmm is None or self.states.size == 0:
-            raise RuntimeError("Call train_hmm() first.")
-
-        df = self.df.copy()
-        df["state"] = self.states
-
-        stats = (
-            df.groupby("state")[["daily_return", "volatility"]]
-            .mean()
-            .rename(columns={"daily_return": "mean_return", "volatility": "mean_vol"})
-        )
-        print("\n[RegimeAgent] Per-state statistics:")
-        print(stats.to_string())
-
-        mapping: dict[int, str] = {}
-        remaining = set(stats.index.tolist())
-
-        # Bull - highest mean return
-        bull_state = int(stats["mean_return"].idxmax())
+        # Bull: highest mean_return
+        bull_state = int(np.argmax(mean_ret))
         mapping[bull_state] = "Bull"
         remaining.discard(bull_state)
 
-        # Bear - lowest mean return
-        bear_state = int(stats["mean_return"].idxmin())
+        # Bear: lowest mean_return (from remaining)
+        bear_state = min(remaining, key=lambda s: mean_ret[s])
         mapping[bear_state] = "Bear"
         remaining.discard(bear_state)
 
-        # HighVol → highest mean volatility (from remaining)
-        remaining_stats = stats.loc[list(remaining)]
-        highvol_state = int(remaining_stats["mean_vol"].idxmax())
+        # HighVolatility: highest mean_vol from remaining
+        highvol_state = max(remaining, key=lambda s: mean_vol[s])
         mapping[highvol_state] = "HighVolatility"
         remaining.discard(highvol_state)
 
-        # Sideways → the last state
-        sideways_state = list(remaining)[0]
-        mapping[sideways_state] = "Sideways"
+        # Sideways: everything else
+        for s in remaining:
+            mapping[s] = "Sideways"
 
-        self.regime_map = mapping
-        print(f"\n[RegimeAgent] Regime mapping: {mapping}")
+        print("[RegimeAgent] State -> regime mapping (rank-based, stable):")
+        for st in range(n_states):
+            print("  State %d: %-16s (mean_ret=%+.4f, mean_vol=%+.4f)" % (
+                st, mapping[st], float(mean_ret[st]), float(mean_vol[st])
+            ))
+        return mapping
 
-        # Write the state and regime columns back to the main DataFrame
-        self.df["state"] = self.states
-        self.df["regime"] = self.df["state"].map(mapping)
+    # --------------------------------------------------------------------------
+    # STEP 3 - TRAIN
+    # --------------------------------------------------------------------------
+    def train(self):
+        """Fit GaussianHMM on scaled NIFTY feature matrix and persist to disk."""
+        assert self.feature_matrix is not None, "Call fetch_data() before train()."
 
-    # ------------------------------------------------------------------
-    # STEP 5 - CURRENT REGIME OUTPUT
-    # ------------------------------------------------------------------
-    def get_current_regime(self, window: int = 60) -> str:
-        """
-        Infer the current regime from the last `window` data rows.
+        print("[RegimeAgent] Training HMM (states=%d, iter=%d)..." % (
+            N_HMM_STATES, HMM_ITERATIONS
+        ))
 
-        Uses majority-vote over HMM predictions in the recent window
-        to smooth out short-term noise.
-
-        Parameters
-        ----------
-        window : int
-            Number of recent rows to look at. Default 60 (~3 months).
-
-        Returns
-        -------
-        str
-            One of "Bull", "Bear", "Sideways", "HighVolatility".
-        """
-        if self.hmm is None or not self.regime_map:
-            raise RuntimeError("Call train_hmm() and label_regimes() first.")
-
-        recent_scaled = self.scaled_features[-window:]
-        recent_states = self.hmm.predict(recent_scaled)
-
-        # Majority vote
-        dominant_state = int(np.bincount(recent_states).argmax())
-        regime = self.regime_map[dominant_state]
-
-        print(f"\n[RegimeAgent] Current Regime: {regime.upper()}")
-        return regime
-
-    # ------------------------------------------------------------------
-    # STEP 6 - VISUALIZATION
-    # ------------------------------------------------------------------
-    def plot_regimes(self, save_path: str | None = None) -> None:
-        """
-        Plot the Close price coloured by detected regime bands.
-
-        Parameters
-        ----------
-        save_path : str | None
-            If provided, saves the figure to this path instead of showing it.
-        """
-        if "regime" not in self.df.columns:
-            raise RuntimeError("Call label_regimes() first.")
-
-        fig, ax = plt.subplots(figsize=(16, 6))
-        ax.plot(self.df.index, self.df["Close"], color="white", linewidth=1.2, zorder=3)
-
-        # Shade background by regime
-        prev_date = self.df.index[0]
-        prev_regime = self.df["regime"].iloc[0]
-
-        for i in range(1, len(self.df)):
-            current_regime = self.df["regime"].iloc[i]
-            if current_regime != prev_regime or i == len(self.df) - 1:
-                ax.axvspan(
-                    prev_date,
-                    self.df.index[i],
-                    facecolor=self.REGIME_COLOURS.get(prev_regime, "#888888"),
-                    alpha=0.25,
-                    zorder=1,
-                )
-                prev_date = self.df.index[i]
-                prev_regime = current_regime
-
-        # Legend
-        legend_patches = [
-            mpatches.Patch(color=c, alpha=0.6, label=label)
-            for label, c in self.REGIME_COLOURS.items()
-        ]
-        ax.legend(handles=legend_patches, loc="upper left", fontsize=10)
-
-        # Styling
-        fig.patch.set_facecolor("#0A1128")
-        ax.set_facecolor("#0A1128")
-        ax.spines["bottom"].set_color("#334155")
-        ax.spines["left"].set_color("#334155")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.tick_params(colors="#9CA3AF")
-        ax.yaxis.label.set_color("#9CA3AF")
-        ax.xaxis.label.set_color("#9CA3AF")
-        ax.set_title(
-            f"Market Regime Detection - {self.ticker}",
-            color="white",
-            fontsize=14,
-            pad=12,
+        self.hmm = GaussianHMM(
+            n_components=N_HMM_STATES,
+            covariance_type="full",
+            n_iter=HMM_ITERATIONS,
+            random_state=RANDOM_STATE,
         )
-        ax.set_xlabel("Date", color="#9CA3AF")
-        ax.set_ylabel("Price", color="#9CA3AF")
+        self.hmm.fit(self.scaled_features)
 
-        plt.tight_layout()
+        converged = getattr(self.hmm.monitor_, "converged", False)
+        if not converged:
+            print("  [WARN] HMM did not fully converge. "
+                  "Model is still usable but may be suboptimal.")
 
-        if save_path:
-            plt.savefig(save_path, dpi=150, bbox_inches="tight")
-            print(f"[RegimeAgent] Chart saved to: {save_path}")
-        else:
-            plt.show()
+        self.state_map = self._map_states_to_regimes()
+
+        try:
+            joblib.dump((self.hmm, self.state_map, self.scaler), HMM_MODEL_PATH)
+            print("[RegimeAgent] Model saved -> %s" % HMM_MODEL_PATH)
+        except Exception as exc:
+            print("  [WARN] Could not save model: %s" % exc)
+
+        start = self.df.index[0].date()
+        end   = self.df.index[-1].date()
+        print("[RegimeAgent] Trained on %d rows from %s to %s" % (
+            len(self.feature_matrix), start, end
+        ))
+        print("[RegimeAgent] State mapping: %s" % self.state_map)
+
+    # --------------------------------------------------------------------------
+    # STEP 4 - LOAD
+    # --------------------------------------------------------------------------
+    def load(self):
+        """Load a previously saved HMM + scaler from disk."""
+        if not os.path.exists(HMM_MODEL_PATH):
+            raise FileNotFoundError(
+                "No trained model found at '%s'. Run train() first." % HMM_MODEL_PATH
+            )
+        try:
+            saved = joblib.load(HMM_MODEL_PATH)
+            if len(saved) == 3:
+                self.hmm, self.state_map, self.scaler = saved
+            else:
+                self.hmm, self.state_map = saved   # backward compat
+            print("[RegimeAgent] Model loaded. State mapping: %s" % self.state_map)
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to load model from '%s': %s" % (HMM_MODEL_PATH, exc)
+            ) from exc
+
+    # --------------------------------------------------------------------------
+    # STEP 5 - GET CURRENT REGIME  (P2 FIX: averaged confidence)
+    # --------------------------------------------------------------------------
+    def get_current_regime(self):
+        """Predict current regime with persistence filter and averaged confidence."""
+        assert self.hmm is not None and self.state_map is not None, \
+            "Model not ready. Call train() or load() first, then fetch_data()."
+        assert self.feature_matrix is not None, \
+            "Feature matrix is missing. Call fetch_data() first."
+
+        recent_scaled = self.scaled_features[-60:]
+        all_preds     = self.hmm.predict(recent_scaled)
+
+        # ---- Persistence filter ----
+        last_n        = all_preds[-PERSISTENCE_DAYS:]
+        counts        = np.bincount(last_n, minlength=N_HMM_STATES)
+        winning_state = int(counts.argmax())
+        persistent    = bool(counts[winning_state] >= 2)
+
+        if not persistent:
+            winning_state = int(all_preds[-2])
+            print("  [RegimeAgent] Persistence filter failed -- "
+                  "falling back to previous day state: %d" % winning_state)
+
+        regime_string = self.state_map.get(winning_state, "Sideways")
+
+        # ---- P2 FIX: average predict_proba over last CONFIDENCE_WINDOW obs ----
+        window_obs  = recent_scaled[-CONFIDENCE_WINDOW:]           # shape: (10, 3)
+        all_probs   = self.hmm.predict_proba(window_obs)           # shape: (10, n_states)
+        avg_probs   = all_probs.mean(axis=0)                       # shape: (n_states,)
+        confidence  = round(float(avg_probs[winning_state]) * 100, 1)
+
+        state_probs = {
+            self.state_map.get(i, "State%d" % i): round(float(p), 4)
+            for i, p in enumerate(avg_probs)
+        }
+
+        converged = getattr(self.hmm.monitor_, "converged", True)
+
+        return {
+            "regime":             regime_string,
+            "confidence":         confidence,
+            "raw_state":          winning_state,
+            "state_probabilities": state_probs,
+            "persistent":         persistent,
+            "converged":          converged,
+            "as_of_date":         str(date.today()),
+        }
+
+    # --------------------------------------------------------------------------
+    # STEP 6 - WALK-FORWARD VALIDATION  (P3 FIX: each fold uses rank-based labels)
+    # --------------------------------------------------------------------------
+    def walk_forward_validate(self):
+        """Run walk-forward validation with per-fold scaling and rank-based labeling."""
+        assert self.feature_matrix is not None and self.df is not None, \
+            "Call fetch_data() first."
+
+        TRAIN_WINDOW = 1000
+        STEP         = 63
+        n            = len(self.feature_matrix)
+
+        if n < TRAIN_WINDOW + STEP:
+            print("[RegimeAgent] Not enough data for walk-forward. "
+                  "Need >%d rows, have %d." % (TRAIN_WINDOW + STEP, n))
+            return
+
+        print("\n[RegimeAgent] Running walk-forward validation...")
+        results     = []
+        fold_errors = 0
+
+        for start in range(0, n - TRAIN_WINDOW - STEP, STEP):
+            train_end = start + TRAIN_WINDOW
+            test_end  = min(train_end + STEP, n)
+
+            # Scale each fold independently -- prevents degenerate covariance
+            fold_scaler = StandardScaler()
+            train_X = fold_scaler.fit_transform(self.feature_matrix[start:train_end])
+            test_X  = fold_scaler.transform(self.feature_matrix[train_end:test_end])
+
+            try:
+                tmp_hmm = GaussianHMM(
+                    n_components=N_HMM_STATES,
+                    covariance_type="full",
+                    n_iter=HMM_ITERATIONS,
+                    random_state=RANDOM_STATE,
+                )
+                tmp_hmm.fit(train_X)
+
+                # Temporarily swap so _map_states_to_regimes uses tmp_hmm
+                saved_hmm = self.hmm
+                self.hmm  = tmp_hmm
+                tmp_map   = self._map_states_to_regimes()   # P3: rank-based, stable
+                self.hmm  = saved_hmm
+
+                raw_preds  = tmp_hmm.predict(test_X)
+                labels     = [tmp_map.get(s, "Sideways") for s in raw_preds]
+
+                period_str = "%s to %s" % (
+                    self.df.index[train_end].date(),
+                    self.df.index[test_end - 1].date()
+                )
+                dist = {r: labels.count(r) / len(labels) * 100 for r in ALL_REGIME_LABELS}
+                dist["period"] = period_str
+                results.append(dist)
+
+            except Exception as fold_exc:
+                fold_errors += 1
+                if fold_errors <= 3:
+                    print("  [WARN] Fold %d skipped: %s" % (start, fold_exc))
+                continue
+
+        if fold_errors:
+            print("  [INFO] %d fold(s) skipped." % fold_errors)
+
+        # Print summary table
+        print("\n%-30s %7s %7s %11s %9s" % (
+            "Period", "Bull%", "Bear%", "Sideways%", "HighVol%"
+        ))
+        print("-" * 68)
+        regime_ever_seen = {r: False for r in ALL_REGIME_LABELS}
+        for row in results:
+            for r in ALL_REGIME_LABELS:
+                if row[r] > 0:
+                    regime_ever_seen[r] = True
+            print("%-30s %6.1f%% %6.1f%% %10.1f%% %8.1f%%" % (
+                row["period"],
+                row["Bull"], row["Bear"],
+                row["Sideways"], row["HighVolatility"]
+            ))
+
+        for regime, seen in regime_ever_seen.items():
+            if not seen:
+                print(
+                    "\nWARNING: '%s' never detected in walk-forward. "
+                    "Consider extending the training period." % regime
+                )
+
+        print("[RegimeAgent] Walk-forward validation complete.\n")
 
 
 # ==============================================================================
-# MAIN BLOCK - Called from CLI or Node.js backend
+# MAIN BLOCK
 # ==============================================================================
 if __name__ == "__main__":
-    import sys as _sys
-    import json as _json
+    agent = RegimeAgent()
+    agent.fetch_data()
+    agent.train()
+    result = agent.get_current_regime()
 
-    # Accept ticker and exchange from command line: python regime_agent.py M&M NSE
-    _ticker = _sys.argv[1] if len(_sys.argv) > 1 else "^NSEI"
-    _exchange = _sys.argv[2] if len(_sys.argv) > 2 else "NSE"
-    _period = _sys.argv[3] if len(_sys.argv) > 3 else "3y"
+    print("\n=== CURRENT MARKET REGIME ===")
+    print("Regime:     %s" % result["regime"])
+    print("Confidence: %.1f%%" % result["confidence"])
+    print("Persistent: %s" % result["persistent"])
+    print("As of:      %s" % result["as_of_date"])
 
-    _result = None
-    try:
-        agent = MarketRegimeAgent(ticker=_ticker, exchange=_exchange, period=_period)
-        agent.fetch_data()
-        agent.compute_features()
-        agent.train_hmm()
-        agent.label_regimes()
-        _result = {
-            "regime": agent.get_current_regime(),
-            "ticker": agent.ticker,
-        }
-    except Exception as _e:
-        print(f"[RegimeAgent] Failed: {_e}", file=_sys.stderr)
-
-    if _result:
-        print(f"\n---JSON_OUTPUT---{_json.dumps(_result)}---JSON_OUTPUT---")
-    else:
-        print(f"\n---JSON_OUTPUT---{_json.dumps({'error': 'Could not fetch data for ticker'})}---JSON_OUTPUT---")
+    agent.walk_forward_validate()

@@ -1,0 +1,8 @@
+{
+  "ticker": "KOTAKBANK.NS",
+  "regime": "Bull",
+  "trained_on": "2026-04-23",
+  "n_train": 484,
+  "accuracy": 47.1,
+  "period": "10y"
+}

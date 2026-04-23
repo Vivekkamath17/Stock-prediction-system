@@ -1,0 +1,8 @@
+{
+  "ticker": "KOTAKBANK.NS",
+  "regime": "Sideways",
+  "trained_on": "2026-04-23",
+  "n_train": 661,
+  "accuracy": 54.8,
+  "period": "10y"
+}

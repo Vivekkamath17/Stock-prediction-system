@@ -1,0 +1,8 @@
+{
+  "ticker": "RELIANCE.NS",
+  "regime": "Sideways",
+  "trained_on": "2026-04-23",
+  "n_train": 698,
+  "accuracy": 49.7,
+  "period": "10y"
+}

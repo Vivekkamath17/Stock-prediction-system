@@ -1,0 +1,8 @@
+{
+  "ticker": "KOTAKBANK.NS",
+  "regime": "HighVolatility",
+  "trained_on": "2026-04-23",
+  "n_train": 536,
+  "accuracy": 55.2,
+  "period": "10y"
+}
