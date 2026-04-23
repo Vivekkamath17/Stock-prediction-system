@@ -161,7 +161,7 @@ export function LaunchPad({ onSearch, selectedTicker, user }: LaunchPadProps) {
     >
       <div className="flex items-center gap-2 mb-4">
         <Target className="size-5 text-[#FF6B35]" />
-        <h2 className="text-xl font-semibold">SELECT MISSION TARGET</h2>
+        <h2 className="text-xl font-semibold">SELECT STOCK TARGET</h2>
       </div>
 
       <style>{`
